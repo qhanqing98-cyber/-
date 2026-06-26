@@ -1,0 +1,353 @@
+# main.py — 桌宠主程序
+# 启动: python main.py  或双击 run_pet.bat
+
+import ctypes
+from ctypes import wintypes
+import sys
+
+import pygame
+
+from config import *
+from pet import Pet
+import character
+
+# ─── Windows API 常量 ────────────────────────
+_GWL_EXSTYLE = -20
+_WS_EX_LAYERED = 0x00080000
+_WS_EX_TRANSPARENT = 0x00000020
+_WS_EX_TOPMOST = 0x00000008
+_WS_EX_TOOLWINDOW = 0x00000080
+_SWP_NOACTIVATE = 0x0010
+_SWP_SHOWWINDOW = 0x0040
+_SWP_NOZORDER = 0x0004
+_LWA_COLORKEY = 1
+
+_VK_LBUTTON = 0x01
+
+_user32 = ctypes.windll.user32
+
+
+def _rgb(r, g, b):
+    return ctypes.c_uint(r | (g << 8) | (b << 16)).value
+
+
+def _get_hwnd():
+    return pygame.display.get_wm_info()['window']
+
+
+def _set_window_transparent(hwnd):
+    current = _user32.GetWindowLongW(hwnd, _GWL_EXSTYLE)
+    style = current | _WS_EX_LAYERED | _WS_EX_TOPMOST | _WS_EX_TOOLWINDOW
+    _user32.SetWindowLongW(hwnd, _GWL_EXSTYLE, style)
+    _user32.SetLayeredWindowAttributes(
+        hwnd, _rgb(*TRANSPARENT_COLOR), 0, _LWA_COLORKEY)
+
+
+def _set_clickthrough(hwnd, enabled):
+    current = _user32.GetWindowLongW(hwnd, _GWL_EXSTYLE)
+    if enabled:
+        _user32.SetWindowLongW(hwnd, _GWL_EXSTYLE,
+                               current | _WS_EX_TRANSPARENT)
+    else:
+        _user32.SetWindowLongW(hwnd, _GWL_EXSTYLE,
+                               current & ~_WS_EX_TRANSPARENT)
+
+
+def _move_window(hwnd, x, y):
+    _user32.SetWindowPos(hwnd, 0,
+                         int(x), int(y),
+                         WINDOW_WIDTH, WINDOW_HEIGHT,
+                         _SWP_NOZORDER | _SWP_NOACTIVATE | _SWP_SHOWWINDOW)
+
+
+def _get_cursor_screen_pos():
+    pt = wintypes.POINT()
+    _user32.GetCursorPos(ctypes.byref(pt))
+    return pt.x, pt.y
+
+
+def _is_lbutton_pressed():
+    """全局检测左键是否按下（不依赖窗口焦点）"""
+    return (_user32.GetAsyncKeyState(_VK_LBUTTON) & 0x8000) != 0
+
+
+# ─── 右键菜单 ────────────────────────────────
+
+class ContextMenu:
+    def __init__(self):
+        self.active = False
+        self.menu_x = 0
+        self.menu_y = 0
+        self.item_h = 28
+        self.item_w = 88
+        self.pad = 4
+        self.scrollbar_w = 8
+        self.max_visible = 3          # 最多同时显示几个
+        self.scroll_offset = 0        # 第一个可见项的索引
+        self.selected_index = 0
+        self.items = [
+            ('\u2192 Feed', 'feed'),
+            ('\u2665 Pet', 'pet'),
+            ('\u2716 Quit', 'quit'),
+        ]
+        self.font = None
+
+    @property
+    def _visible_count(self):
+        return min(len(self.items), self.max_visible)
+
+    @property
+    def _menu_w(self):
+        return self.item_w + self.pad * 2 + self.scrollbar_w
+
+    @property
+    def _menu_h(self):
+        return self._visible_count * self.item_h + self.pad * 2
+
+    def show(self, sx, sy, win_l, win_t):
+        """弹出菜单，自动避免超出窗口边界"""
+        self.active = True
+        self.selected_index = 0
+        self.scroll_offset = 0
+
+        w = self._menu_w
+        h = self._menu_h
+
+        # 转为窗口相对坐标
+        rx = sx - win_l
+        ry = sy - win_t
+
+        # 垂直：优先放光标下方，放不下则放上方
+        if ry + h > WINDOW_HEIGHT:
+            ry = ry - h - 5
+        if ry < 0:
+            ry = 0
+
+        # 水平
+        if rx + w > WINDOW_WIDTH:
+            rx = WINDOW_WIDTH - w
+        if rx < 0:
+            rx = 0
+
+        # 转回屏幕坐标
+        self.menu_x = rx + win_l
+        self.menu_y = ry + win_t
+
+    def hide(self):
+        self.active = False
+
+    def contains(self, sx, sy):
+        """返回光标是否在菜单区域内（不改变任何状态）"""
+        if not self.active:
+            return False
+        return (self.menu_x <= sx <= self.menu_x + self._menu_w and
+                self.menu_y <= sy <= self.menu_y + self._menu_h)
+
+    def scroll(self, delta):
+        """滚轮：delta>0 上滚，delta<0 下滚"""
+        total = len(self.items)
+        if total <= self.max_visible:
+            return
+        max_offset = total - self.max_visible
+        self.scroll_offset = max(0, min(self.scroll_offset - delta, max_offset))
+        # 同时让选中项保持在可见范围内
+        if self.selected_index < self.scroll_offset:
+            self.selected_index = self.scroll_offset
+        elif self.selected_index >= self.scroll_offset + self.max_visible:
+            self.selected_index = self.scroll_offset + self.max_visible - 1
+
+    def hit_test(self, sx, sy):
+        if not self.active:
+            return None
+        w = self._menu_w
+        h = self._menu_h
+        if not (self.menu_x <= sx <= self.menu_x + w and
+                self.menu_y <= sy <= self.menu_y + h):
+            self.active = False
+            return None
+        rel_idx = (sy - self.menu_y - self.pad) // self.item_h
+        idx = self.scroll_offset + rel_idx
+        if 0 <= idx < len(self.items) and rel_idx < self._visible_count:
+            self.active = False
+            return self.items[idx][1]
+        self.active = False
+        return None
+
+    def draw(self, surf, win_l, win_t):
+        if not self.active:
+            return
+        w = self._menu_w
+        h = self._menu_h
+        dx = self.menu_x - win_l
+        dy = self.menu_y - win_t
+
+        # 菜单背景
+        pygame.draw.rect(surf, (240, 240, 240), (dx, dy, w, h))
+        pygame.draw.rect(surf, (180, 180, 180), (dx, dy, w, h), 1)
+
+        if self.font is None:
+            self.font = pygame.font.SysFont('simsun', 14)
+
+        total = len(self.items)
+        for i_rel in range(self._visible_count):
+            i_abs = self.scroll_offset + i_rel
+            if i_abs >= total:
+                break
+            label, _ = self.items[i_abs]
+            iy = dy + self.pad + i_rel * self.item_h
+
+            # 高亮逻辑
+            if i_abs == self.selected_index:
+                bg = (180, 210, 255)          # 蓝色高亮
+            elif i_abs == total - 1 and 'Quit' in label:
+                bg = (255, 220, 220)          # Quit 粉色
+            else:
+                bg = (220, 220, 220)
+
+            pygame.draw.rect(surf, bg,
+                             (dx + self.pad, iy, self.item_w, self.item_h - 2))
+            txt = self.font.render(label, True, (40, 40, 40))
+            surf.blit(txt, (dx + self.pad + 6, iy + 4))
+
+        # 滚动条（仅在项数超出可见范围时显示）
+        if total > self.max_visible:
+            sb_x = dx + w - self.scrollbar_w - 2
+            sb_y = dy + 2
+            sb_h = h - 4
+            # 轨道
+            pygame.draw.rect(surf, (200, 200, 200), (sb_x, sb_y, self.scrollbar_w, sb_h))
+            # 滑块
+            thumb_h = max(12, sb_h * self.max_visible // total)
+            thumb_y = sb_y + (sb_h - thumb_h) * self.scroll_offset // (total - self.max_visible)
+            pygame.draw.rect(surf, (160, 160, 160), (sb_x, thumb_y, self.scrollbar_w, thumb_h))
+
+
+# ════════════════════════════════════════════
+
+def main():
+    # ——— 单实例锁：已有实例运行则退出 ———
+    _kernel32 = ctypes.windll.kernel32
+    _kernel32.CreateMutexW.argtypes = [wintypes.LPCVOID, wintypes.BOOL, wintypes.LPCWSTR]
+    _kernel32.CreateMutexW.restype = wintypes.HANDLE
+    _ERROR_ALREADY_EXISTS = 183
+    _mutex = _kernel32.CreateMutexW(None, False, 'DeskPet_SingleInstance')
+    if _kernel32.GetLastError() == _ERROR_ALREADY_EXISTS:
+        sys.exit(0)
+
+    pygame.init()
+    screen = pygame.display.set_mode(
+        (WINDOW_WIDTH, WINDOW_HEIGHT), pygame.NOFRAME
+    )
+    pygame.display.set_caption('DeskPet')
+
+    hwnd = _get_hwnd()
+    _set_window_transparent(hwnd)
+    character.load_sprites()
+
+    pet = Pet()
+    menu = ContextMenu()
+    clock = pygame.time.Clock()
+
+    _move_window(hwnd, pet.x - PET_CENTER_X, pet.y - PET_CENTER_Y)
+    _set_clickthrough(hwnd, True)
+    ct_enabled = True
+    prev_lbtn = False  # 上一帧左键状态（用于全局点击检测）
+
+    running = True
+    while running:
+        clock.tick(FPS)
+        cx, cy = _get_cursor_screen_pos()
+        over_pet = pet.hit_test(cx, cy)
+
+        # 鼠标穿透切换（仅在需要改变时）
+        need_ct = not (over_pet or pet.is_dragging or menu.active)
+        if need_ct != ct_enabled:
+            _set_clickthrough(hwnd, need_ct)
+            ct_enabled = need_ct
+
+        # 全局左键检测：菜单打开时，点击屏幕任意位置（除菜单项外）关闭菜单
+        if menu.active:
+            cur_lbtn = _is_lbutton_pressed()
+            if cur_lbtn and not prev_lbtn:
+                # 新按下的左键，检查是否点在菜单外
+                if not menu.contains(cx, cy):
+                    menu.hide()
+            prev_lbtn = cur_lbtn
+        else:
+            prev_lbtn = False
+
+        pet.is_hovered = over_pet and not pet.is_dragging
+
+        # 悬停时显示手型光标
+        if pet.is_hovered:
+            pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
+        else:
+            pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_ARROW)
+
+        # ── 事件 ──
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                running = False
+            elif ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
+                running = False
+
+            elif ev.type == pygame.MOUSEWHEEL:
+                if menu.active:
+                    menu.scroll(ev.y)
+
+            elif ev.type == pygame.MOUSEBUTTONDOWN:
+                if menu.active:
+                    action = menu.hit_test(cx, cy)
+                    if action == 'feed':
+                        pet.on_feed()
+                    elif action == 'pet':
+                        pet.on_pet()
+                    elif action == 'quit':
+                        running = False
+                    continue
+
+                if ev.button == 1 and over_pet:
+                    pet.is_dragging = True
+                    pet.drag_offset_x = cx - pet.x
+                    pet.drag_offset_y = cy - pet.y
+                    pet.on_click()
+
+                elif ev.button == 3 and over_pet:
+                    pet.on_right_click()
+                    menu.show(cx, cy, pet.x - PET_CENTER_X, pet.y - PET_CENTER_Y)
+
+            elif ev.type == pygame.MOUSEBUTTONUP:
+                if ev.button == 1 and pet.is_dragging:
+                    pet.is_dragging = False
+
+            elif ev.type == pygame.MOUSEMOTION:
+                if pet.is_dragging:
+                    pet.x = cx - pet.drag_offset_x
+                    pet.y = cy - pet.drag_offset_y
+                    pet._clamp_position()
+                    _move_window(hwnd, pet.x - PET_CENTER_X, pet.y - PET_CENTER_Y)
+
+        # ── 更新 ──
+        pet.update(frozen=menu.active)
+
+        # ── 窗口跟随 ──
+        if not pet.is_dragging and not menu.active:
+            _move_window(hwnd, pet.x - PET_CENTER_X, pet.y - PET_CENTER_Y)
+
+        # ── 绘制 ──
+        screen.fill(TRANSPARENT_COLOR)
+        character.draw_pet(screen, pet)
+        character.draw_status(screen, pet)
+
+        if menu.active:
+            menu.draw(screen, pet.x - PET_CENTER_X, pet.y - PET_CENTER_Y)
+
+        pygame.display.flip()
+
+    pet.save()
+    pygame.quit()
+    sys.exit()
+
+
+if __name__ == '__main__':
+    main()

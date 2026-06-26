@@ -1,0 +1,34 @@
+default_model = "deepseek/deepseek-v4-flash"
+[permissions]
+allow = ["Bash(where python && python --version 2>&1 || echo \"Python not found\")", "Bash(\"C:\\Program Files\\Python312\\python.exe\" --version 2>&1 && \"C:\\Program Files\\Python312\\python.exe\" -c \"import pygame; print('pygame OK:', pygame.version.ver)\" 2>&1)", "Edit", "Bash(cd \"D:\\桌面\\桌宠\" && \"C:\\Program Files\\Python312\\python.exe\" -c \"\nimport pygame\npygame.init()\nscreen = pygame.display.set_mode((220, 220), pygame.NOFRAME)\nprint('Window created OK')\npygame.quit()\n\")", "Bash(cd \"D:\\桌面\\桌宠\" && \"C:\\Program Files\\Python312\\python.exe\" -c \"\nimport sys\nsys.path.insert(0, '.')\nimport main\n# Just check the module can be imported without syntax errors\nprint('main.py syntax OK')\nprint('ContextMenu class OK')\n\")", "Bash(cd \"D:\\桌面\\桌宠\" && \"C:\\Program Files\\Python312\\python.exe\" -c \"\nimport sys; sys.path.insert(0, '.')\nfrom pet import Pet\np = Pet()\np.update(frozen=True)\np.update(frozen=False)\nprint('pet.update(frozen=...) OK')\nimport main\nprint('main.py imports OK')\n\")", "Bash(cd \"D:\\桌面\\桌宠\" && \"C:\\Program Files\\Python312\\python.exe\" -c \"import sys; sys.path.insert(0,'.'); from pet import Pet; p=Pet(); p.update(frozen=True); p.update(frozen=False); print('pet OK'); import main; print('main OK')\")", "Bash(cd \"D:\\桌面\\桌宠\" && \"C:\\Program Files\\Python312\\python.exe\" -c \"import pygame; print('HAND:', pygame.SYSTEM_CURSOR_HAND); print('ARROW:', pygame.SYSTEM_CURSOR_ARROW)\")", "Bash(cd \"D:\\桌面\\桌宠\" && \"C:\\Program Files\\Python312\\python.exe\" -c \"import sys; sys.path.insert(0,'.'); import main; print('main OK')\")", "Bash(cd \"D:\\桌面\\桌宠\" && \"C:\\Program Files\\Python312\\python.exe\" -c \"import sys; sys.path.insert(0,'.'); import main; print('All imports OK')\")", "Bash(cd \"D:\\桌面\\桌宠\" && \"C:\\Program Files\\Python312\\python.exe\" -c \"\nimport sys; sys.path.insert(0,'.')\nfrom pet import Pet\nfrom config import HIT_RADIUS\nimport character\n\np = Pet()\np.is_hovered = True\nprint('HIT_RADIUS:', HIT_RADIUS)\nprint('frozen update:', end=' ')\np.update(frozen=True)\nprint('OK')\nprint('status:', p.status_string())\nprint('draw_status exists:', hasattr(character, 'draw_status'))\n\")", "Bash(cd \"D:\\桌面\\桌宠\" && \"C:\\Program Files\\Python312\\python.exe\" -c \"import sys; sys.path.insert(0,'.'); import main; print('OK')\")", "Bash(cd \"D:\\桌面\\桌宠\" && \"C:\\Program Files\\Python312\\python.exe\" -c \"import sys; sys.path.insert(0,'.'); import main; m = main.ContextMenu(); m.show(100, 700); print('menu_x:', m.menu_x, 'menu_y:', m.menu_y); m.scroll(1); print('scroll OK'); print('All OK')\")"]
+[[providers]]
+name        = "deepseek-flash"
+kind        = "openai"
+base_url    = "https://api.deepseek.com"
+model       = "deepseek-v4-flash"
+api_key_env = "DEEPSEEK_API_KEY"
+balance_url = "https://api.deepseek.com/user/balance"
+context_window = 1000000
+price       = { cache_hit = 0.02, input = 1, output = 2, currency = "¥" }
+
+[[providers]]
+name        = "deepseek-pro"
+kind        = "openai"
+base_url    = "https://api.deepseek.com"
+model       = "deepseek-v4-pro"
+api_key_env = "DEEPSEEK_API_KEY"
+balance_url = "https://api.deepseek.com/user/balance"
+context_window = 1000000
+price       = { cache_hit = 0.025, input = 3, output = 6, currency = "¥" }
+
+[[providers]]
+name        = "deepseek"
+kind        = "openai"
+base_url    = "https://api.deepseek.com"
+models      = ["deepseek-v4-flash", "deepseek-v4-pro"]
+default     = "deepseek-v4-flash"
+api_key_env = "DEEPSEEK_API_KEY"
+balance_url = "https://api.deepseek.com/user/balance"
+context_window = 1000000
+price       = { cache_hit = 0.02, input = 1, output = 2, currency = "¥" }
+prices      = { "deepseek-v4-flash" = { cache_hit = 0.02, input = 1, output = 2, currency = "¥" }, "deepseek-v4-pro" = { cache_hit = 0.025, input = 3, output = 6, currency = "¥" } }
