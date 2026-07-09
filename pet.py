@@ -34,6 +34,10 @@ class Pet:
         self.surprised_timer = 0
         self.sleep_z_timer = 0
         self.sleep_z_visible = False
+
+        self.word_timer = 0.0
+        self.word_bubble_active = False
+
         self.min_x = WINDOW_WIDTH // 2
         self.max_x = SCREEN_WIDTH - WINDOW_WIDTH // 2
         self.min_y_scrn = 0

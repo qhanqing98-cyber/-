@@ -62,3 +62,6 @@ SLEEP_Z_COLOR = (200, 180, 255)    # Z 颜色
 
 # ——— 精灵图目录 ———
 SPRITES_DIR = 'sprites'
+
+# ——— 单词学习 ———
+WORD_INTERVAL = 300  # 每 5 分钟弹出一个单词（单位：秒）

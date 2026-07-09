@@ -10,6 +10,7 @@ import pygame
 
 from config import *
 from pet import Pet
+from words import WordList
 import character
 
 # ─── Windows API 常量 ────────────────────────
@@ -87,9 +88,10 @@ class ContextMenu:
         self.scroll_offset = 0
         self.selected_index = 0
         self.items = [
-            ('\u1F35C Feed', 'feed'),
-            ('\u2764\uFE0F Pet', 'pet'),
-            ('\u274C Quit', 'quit'),
+            ('📖 导入单词表', 'import_words'),
+            ('🍜 Feed', 'feed'),
+            ('❤️ Pet', 'pet'),
+            ('❌ Quit', 'quit'),
         ]
         self.font = None
         self.hover_index = -1
@@ -257,6 +259,45 @@ class ContextMenu:
 
 # ════════════════════════════════════════════
 
+def _do_import_words(pet, word_list):
+    """打开文件对话框导入单词表"""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except ImportError:
+        pet.add_feedback('❌', (255, 100, 100), 3)
+        return
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
+    path = filedialog.askopenfilename(
+        title='导入单词表',
+        filetypes=[
+            ('支持格式', '*.txt;*.csv;*.json'),
+            ('文本文件', '*.txt'),
+            ('CSV文件', '*.csv'),
+            ('JSON文件', '*.json'),
+            ('所有文件', '*.*'),
+        ],
+    )
+    root.destroy()
+
+    if not path:
+        return
+
+    success, msg = word_list.import_file(path)
+    pet.word_bubble_active = False
+    pet.word_timer = 0.0
+
+    if success:
+        # 首次导入后 3 秒弹出第一个单词
+        pet.word_timer = WORD_INTERVAL - 3
+        pet.add_feedback(f'✅ {msg}', (100, 255, 100), 1)
+    else:
+        pet.add_feedback(f'❌ {msg}', (255, 100, 100), 1)
+
+
 def main():
     # ——— 单实例锁：已有实例运行则退出 ———
     _kernel32 = ctypes.windll.kernel32
@@ -278,6 +319,7 @@ def main():
     character.load_sprites()
 
     pet = Pet()
+    word_list = WordList()
     menu = ContextMenu()
     clock = pygame.time.Clock()
 
@@ -294,7 +336,7 @@ def main():
         over_pet = pet.hit_test(cx, cy)
 
         # 鼠标穿透切换（仅在需要改变时）
-        need_ct = not (over_pet or pet.is_dragging or menu.active)
+        need_ct = not (over_pet or pet.is_dragging or menu.active or pet.word_bubble_active)
         if need_ct != ct_enabled:
             _set_clickthrough(hwnd, need_ct)
             ct_enabled = need_ct
@@ -338,13 +380,22 @@ def main():
                         pet.on_pet()
                     elif action == 'quit':
                         running = False
+                    elif action == 'import_words':
+                        menu.active = False
+                        _do_import_words(pet, word_list)
                     continue
 
                 if ev.button == 1 and over_pet:
-                    pet.is_dragging = True
-                    pet.drag_offset_x = cx - pet.x
-                    pet.drag_offset_y = cy - pet.y
-                    pet.on_click()
+                    # 单词气泡激活时：点击宠物关闭气泡
+                    if pet.word_bubble_active and word_list.has_words():
+                        pet.word_bubble_active = False
+                        word_list.advance()
+                        pet.word_timer = 0.0
+                    else:
+                        pet.is_dragging = True
+                        pet.drag_offset_x = cx - pet.x
+                        pet.drag_offset_y = cy - pet.y
+                        pet.on_click()
 
                 elif ev.button == 3 and over_pet:
                     pet.on_right_click()
@@ -365,6 +416,13 @@ def main():
         # ── 更新 ──
         pet.update(frozen=menu.active, dt=dt)
 
+        # 单词定时器
+        if word_list.has_words() and not pet.word_bubble_active and not menu.active:
+            pet.word_timer += dt
+            if pet.word_timer >= WORD_INTERVAL:
+                pet.word_bubble_active = True
+                pet.word_timer = 0.0
+
         # ── 窗口跟随 ──
         if not pet.is_dragging and not menu.active:
             _move_window(hwnd, pet.x - PET_CENTER_X, pet.y - PET_CENTER_Y)
@@ -374,6 +432,9 @@ def main():
         character.draw_pet(screen, pet)
         character.draw_status(screen, pet)
         character.draw_feedback(screen, pet)
+
+        if pet.word_bubble_active:
+            character.draw_word_bubble(screen, word_list.get_current())
 
         if menu.active:
             menu.draw(screen, pet.x - PET_CENTER_X, pet.y - PET_CENTER_Y)

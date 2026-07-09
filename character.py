@@ -454,3 +454,83 @@ def draw_status(surface, pet):
         num_font = pygame.font.SysFont('simsun', 10)
         num = num_font.render(f'{val:.0f}', True, (200, 200, 200))
         surface.blit(num, (bar_x + bar_w + 4, ly + 2))
+
+
+# ════════════════════════════════════════════
+# 单词气泡
+# ════════════════════════════════════════════
+
+_WORD_BUBBLE_BG = (40, 40, 50)
+_WORD_BUBBLE_BORDER = (100, 100, 130)
+_WORD_FONT_SIZE = 26
+_WORD_MEANING_FONT_SIZE = 16
+_BUBBLE_PAD = 14
+_BUBBLE_RADIUS = 10
+_BUBBLE_LINE_GAP = 8
+
+
+def _draw_rounded_rect_static(surf, color, rect, radius):
+    """绘制纯色圆角矩形（无边框）"""
+    x, y, w, h = rect
+    pygame.draw.rect(surf, color, (x + radius, y, w - radius * 2, h))
+    pygame.draw.rect(surf, color, (x, y + radius, w, h - radius * 2))
+    pygame.draw.circle(surf, color, (x + radius, y + radius), radius)
+    pygame.draw.circle(surf, color, (x + w - radius, y + radius), radius)
+    pygame.draw.circle(surf, color, (x + radius, y + h - radius), radius)
+    pygame.draw.circle(surf, color, (x + w - radius, y + h - radius), radius)
+
+
+def draw_word_bubble(surface, word_data):
+    """在宠物上方绘制单词气泡"""
+    if word_data is None:
+        return
+
+    word = word_data['word']
+    meaning = word_data.get('meaning', '')
+
+    word_font = pygame.font.SysFont('simsun', _WORD_FONT_SIZE, bold=True)
+    meaning_font = pygame.font.SysFont('simsun', _WORD_MEANING_FONT_SIZE)
+
+    word_surf = word_font.render(word, True, (255, 255, 255))
+    meaning_surf = meaning_font.render(meaning, True, (200, 200, 230)) if meaning else None
+
+    pw = _BUBBLE_PAD
+    w = word_surf.get_width() + pw * 2
+    h = word_surf.get_height() + pw * 2
+    if meaning_surf:
+        w = max(w, meaning_surf.get_width() + pw * 2)
+        h += meaning_surf.get_height() + _BUBBLE_LINE_GAP
+
+    # 最小宽度
+    w = max(w, 80)
+
+    # 气泡位置：宠物正上方
+    bx = PET_CENTER_X - w // 2
+    by = PET_CENTER_Y - 80 - h
+
+    # 背景
+    radius = _BUBBLE_RADIUS
+    bg = pygame.Surface((w, h), pygame.SRCALPHA)
+    _draw_rounded_rect_static(bg, (*_WORD_BUBBLE_BG, 235), (0, 0, w, h), radius)
+    pygame.draw.rect(bg, (*_WORD_BUBBLE_BORDER, 180), (0, 0, w, h), 1, radius)
+
+    # 小三角（指向宠物）
+    tri_cx = w // 2
+    tri_y = h
+    tri_size = 8
+    pygame.draw.polygon(bg, (*_WORD_BUBBLE_BG, 235),
+                        [(tri_cx - tri_size, tri_y),
+                         (tri_cx + tri_size, tri_y),
+                         (tri_cx, tri_y + tri_size)])
+
+    surface.blit(bg, (bx, by))
+
+    # 单词文字
+    word_x = bx + (w - word_surf.get_width()) // 2
+    surface.blit(word_surf, (word_x, by + pw))
+
+    # 释义文字
+    if meaning_surf:
+        meaning_x = bx + (w - meaning_surf.get_width()) // 2
+        meaning_y = by + pw + word_surf.get_height() + _BUBBLE_LINE_GAP
+        surface.blit(meaning_surf, (meaning_x, meaning_y))
