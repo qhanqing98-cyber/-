@@ -4,6 +4,7 @@
 
 import ctypes
 from ctypes import wintypes
+import os
 import sys
 
 import pygame
@@ -89,6 +90,8 @@ class ContextMenu:
         self.selected_index = 0
         self.items = [
             ('📖 导入单词表', 'import_words'),
+            ('📚 选择单词本', 'switch_book'),
+            ('🗑 删除单词本', 'delete_book'),
             ('⏱ 单词间隔', 'set_interval'),
             ('🍜 Feed', 'feed'),
             ('❤️ Pet', 'pet'),
@@ -310,7 +313,9 @@ def _do_import_words(pet, word_list):
     if not path:
         return
 
-    success, msg = word_list.import_file(path)
+    # 用文件名（不含后缀）作为单词本名称
+    book_name = os.path.splitext(os.path.basename(path))[0]
+    success, msg = word_list.import_file(path, book_name)
     pet.word_bubble_active = False
     pet.word_timer = 0.0
 
@@ -320,6 +325,94 @@ def _do_import_words(pet, word_list):
         pet.add_feedback(f'✅ {msg}', (100, 255, 100), 1)
     else:
         pet.add_feedback(f'❌ {msg}', (255, 100, 100), 1)
+
+
+def _do_switch_book(word_list, pet):
+    """弹出选择对话框切换单词本"""
+    books = word_list.list_books()
+    if not books:
+        pet.add_feedback('📚 无单词本', (200, 200, 200), 2)
+        return
+
+    try:
+        import tkinter as tk
+    except ImportError:
+        return
+
+    root = tk.Tk()
+    root.title('选择单词本')
+    root.attributes('-topmost', True)
+    root.geometry(f'300x{min(400, len(books)*40 + 60)}')
+
+    current = word_list.get_active_book_name()
+    tk.Label(root, text=f'当前: {current}', font=('', 11)).pack(pady=8)
+
+    listbox = tk.Listbox(root, font=('', 12), height=min(10, len(books)))
+    for name in books:
+        suffix = ' ◀ 当前' if name == current else ''
+        listbox.insert(tk.END, f'{name}{suffix}')
+    listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+    chosen = [None]
+
+    def on_ok():
+        sel = listbox.curselection()
+        if sel:
+            chosen[0] = books[sel[0]]
+        root.destroy()
+
+    def on_double_click(ev):
+        on_ok()
+
+    listbox.bind('<Double-Button-1>', on_double_click)
+    tk.Button(root, text='确定', command=on_ok, width=10).pack(pady=8)
+    root.protocol('WM_DELETE_WINDOW', root.destroy)
+    root.eval('tk::PlaceWindow . center')
+
+    root.grab_set()
+    root.wait_window()
+
+    if chosen[0] and chosen[0] != current:
+        word_list.switch_book(chosen[0])
+        # 重置气泡定时器，立即显示新本的第一个词
+        pet.word_bubble_active = False
+        pet.word_timer = WORD_INTERVAL  # 让气泡马上弹出
+        pet.add_feedback(f'📚 {chosen[0]}', (100, 200, 255), 2)
+        pet.add_particles((100, 200, 255), 6)
+    elif not chosen[0]:
+        pass  # 取消
+    else:
+        pet.add_feedback(f'已经是「{current}」', (200, 200, 200), 2)
+
+
+def _do_delete_book(word_list, pet):
+    """删除当前单词本"""
+    name = word_list.get_active_book_name()
+    books = word_list.list_books()
+    if len(books) <= 1:
+        pet.add_feedback('🗑 至少保留一个', (255, 200, 100), 2)
+        return
+
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+    except ImportError:
+        return
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
+    ok = messagebox.askokcancel('删除单词本', f'确定删除「{name}」吗？\n（共 {len(word_list.words)} 个词）')
+    root.destroy()
+
+    if ok:
+        success, msg = word_list.delete_book(name)
+        if success:
+            pet.word_bubble_active = False
+            pet.word_timer = WORD_INTERVAL
+            pet.add_feedback(f'🗑 {name}', (255, 180, 100), 2)
+        else:
+            pet.add_feedback(f'❌ {msg}', (255, 100, 100), 2)
 
 
 def _do_set_interval(pet):
@@ -460,6 +553,12 @@ def main():
                     elif action == 'set_interval':
                         menu.active = False
                         _do_set_interval(pet)
+                    elif action == 'switch_book':
+                        menu.active = False
+                        _do_switch_book(word_list, pet)
+                    elif action == 'delete_book':
+                        menu.active = False
+                        _do_delete_book(word_list, pet)
                     continue
 
                 if ev.button == 1:

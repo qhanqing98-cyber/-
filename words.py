@@ -1,5 +1,5 @@
-# words.py — 单词表管理
-"""支持导入三种格式：纯文本（一行一个单词）、分隔符（ | 或 Tab）、JSON"""
+# words.py — 多单词本管理
+"""支持多个单词本，每个独立记录进度。导入自动加为新本，可自由切换。"""
 
 import json
 import os
@@ -8,33 +8,76 @@ WORDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'words.jso
 
 
 class WordList:
-    """管理单词列表的加载、保存、导入和进度"""
+    """管理多个单词本的加载、保存、导入和切换"""
 
     def __init__(self):
-        self.words = []   # [{"word": str, "meaning": str}, ...]
-        self.index = 0    # 当前单词索引（循环）
-        self._load()
+        self.books = {}          # {"书名": {"words": [...], "index": 0}, ...}
+        self.active_book = None  # 当前激活的单词本名
+        self._load_or_migrate()
+
+    # ── 当前书快捷属性 ─────────────────────────
+
+    @property
+    def words(self):
+        if self.active_book and self.active_book in self.books:
+            return self.books[self.active_book]['words']
+        return []
+
+    @words.setter
+    def words(self, val):
+        if self.active_book and self.active_book in self.books:
+            self.books[self.active_book]['words'] = val
+
+    @property
+    def index(self):
+        if self.active_book and self.active_book in self.books:
+            return self.books[self.active_book]['index']
+        return 0
+
+    @index.setter
+    def index(self, val):
+        if self.active_book and self.active_book in self.books:
+            self.books[self.active_book]['index'] = val
 
     # ── 持久化 ────────────────────────────────
 
-    def _load(self):
+    def _load_or_migrate(self):
+        """加载 words.json，兼容旧格式"""
         if not os.path.exists(WORDS_FILE):
+            # 创建默认空本
+            self.books = {'默认': {'words': [], 'index': 0}}
+            self.active_book = '默认'
             return
+
         try:
             with open(WORDS_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            self.words = data.get('words', [])
-            self.index = data.get('index', 0)
-            if self.index >= len(self.words) and self.words:
-                self.index = 0
         except Exception:
-            pass
+            self.books = {'默认': {'words': [], 'index': 0}}
+            self.active_book = '默认'
+            return
+
+        # 新格式：有 "books" 键
+        if 'books' in data:
+            self.books = data['books']
+            self.active_book = data.get('active_book', list(self.books.keys())[0] if self.books else None)
+            return
+
+        # 旧格式：{"words": [...], "index": N} → 迁移到 "默认" 本
+        old_words = data.get('words', [])
+        old_index = data.get('index', 0)
+        self.books = {'默认': {'words': old_words, 'index': old_index}}
+        self.active_book = '默认'
+        # 立即保存为新格式
+        self.save()
 
     def save(self):
         try:
             with open(WORDS_FILE, 'w', encoding='utf-8') as f:
-                json.dump({'words': self.words, 'index': self.index},
-                          f, ensure_ascii=False, indent=2)
+                json.dump({
+                    'active_book': self.active_book,
+                    'books': self.books,
+                }, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
 
@@ -44,22 +87,48 @@ class WordList:
         return len(self.words) > 0
 
     def get_current(self):
-        """返回当前要显示的单词 dict，如果没有则返回 None"""
         if not self.words or self.index >= len(self.words):
             return None
         return self.words[self.index]
 
     def advance(self):
-        """移到下一个单词（循环）并保存"""
         if not self.words:
             return
         self.index = (self.index + 1) % len(self.words)
         self.save()
 
+    def get_active_book_name(self):
+        return self.active_book or ''
+
+    def list_books(self):
+        return list(self.books.keys())
+
+    # ── 切换单词本 ─────────────────────────────
+
+    def switch_book(self, name):
+        if name in self.books:
+            self.active_book = name
+            self.save()
+            return True
+        return False
+
+    def delete_book(self, name):
+        """删除指定单词本。返回 (success, message)"""
+        if name not in self.books:
+            return False, f"单词本「{name}」不存在"
+        if len(self.books) <= 1:
+            return False, "至少保留一个单词本"
+        del self.books[name]
+        # 如果删的是当前激活的本，切到另一个
+        if self.active_book == name:
+            self.active_book = next(iter(self.books.keys()))
+        self.save()
+        return True, f"已删除「{name}」"
+
     # ── 导入 ──────────────────────────────────
 
-    def import_file(self, path):
-        """导入单词表，自动识别格式。返回 (success: bool, message: str)"""
+    def import_file(self, path, book_name=None):
+        """导入单词表为新单词本。返回 (success, message)"""
         if not os.path.exists(path):
             return False, "文件不存在"
 
@@ -83,10 +152,15 @@ class WordList:
         if not new_words:
             return False, "未找到有效单词"
 
-        self.words = new_words
-        self.index = 0
+        # 确定单词本名称
+        if not book_name:
+            book_name = os.path.splitext(os.path.basename(path))[0]
+
+        # 添加或覆盖
+        self.books[book_name] = {'words': new_words, 'index': 0}
+        self.active_book = book_name
         self.save()
-        return True, f"成功导入 {len(new_words)} 个单词"
+        return True, f"成功导入 {len(new_words)} 个单词到「{book_name}」"
 
     def _parse_json(self, content):
         try:
@@ -118,7 +192,6 @@ class WordList:
             line = line.strip()
             if not line:
                 continue
-            # 自动检测分隔符优先级: | > Tab > 逗号 > 纯单词
             if '|' in line:
                 parts = line.split('|', 1)
                 w, m = parts[0].strip(), parts[1].strip() if len(parts) > 1 else ''
