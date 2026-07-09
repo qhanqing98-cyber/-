@@ -4,7 +4,7 @@ import ctypes
 from ctypes import wintypes
 
 # ——— 窗口参数 ———
-WINDOW_WIDTH = 220
+WINDOW_WIDTH = 450
 WINDOW_HEIGHT = 220
 TRANSPARENT_COLOR = (255, 0, 255)  # 品红作为透明键
 FPS = 60
