@@ -1,4 +1,4 @@
-# character.py — 角色绘制（程序绘制 + 精灵图加载）
+# character.py — 角色绘制（程序绘制 + 精灵图加载 + GIF 加载）
 
 import math
 import os
@@ -45,6 +45,102 @@ def load_sprites():
         _use_sprites = True
 
 
+# ════════════════════════════════════════════
+# GIF 动画加载（gifs/ 目录，一个 .gif 对应一个行为）
+# ════════════════════════════════════════════
+
+
+def load_gifs(gif_dir='gifs'):
+    """从 gifs/ 目录加载 GIF 作为精灵图动画。
+
+    命名规则：walk.gif → 动画名 'walk'，所有帧作为该动画帧序列。
+    若 gifs/ 存在且有 .gif 文件，则加载并启用精灵模式。
+    """
+    global _sprite_cache, _flipped_cache, _use_sprites
+    gifs_path = os.path.join(os.path.dirname(__file__), gif_dir)
+    if not os.path.isdir(gifs_path):
+        return False
+
+    gif_files = [f for f in os.listdir(gifs_path)
+                 if f.lower().endswith('.gif')]
+    if not gif_files:
+        return False
+
+    try:
+        from PIL import Image
+    except ImportError:
+        return False
+
+    import numpy as np
+
+    _sprite_cache.clear()
+    _flipped_cache.clear()
+    _use_sprites = False
+
+    loaded_any = False
+    for fname in sorted(gif_files):
+        anim_name = os.path.splitext(fname)[0]  # 'walk' from 'walk.gif'
+        path = os.path.join(gifs_path, fname)
+        try:
+            pil_gif = Image.open(path)
+            frames = []
+            n_frames = getattr(pil_gif, 'n_frames', 1)
+            trans_idx = pil_gif.info.get('transparency', -1)
+
+            for i in range(n_frames):
+                pil_gif.seek(i)
+                frame = pil_gif.copy()
+
+                # Palette → RGBA（正确处理透明色）
+                if frame.mode == 'P':
+                    palette = frame.getpalette()
+                    palette_arr = np.array(palette, dtype=np.uint8).reshape(-1, 3)
+                    idx_arr = np.array(frame, dtype=np.uint8)
+
+                    rgb_arr = palette_arr[idx_arr]  # (H, W, 3)
+
+                    if trans_idx >= 0:
+                        alpha = np.where(idx_arr == trans_idx, 0, 255).astype(np.uint8)
+                    else:
+                        alpha = np.full((frame.height, frame.width), 255, dtype=np.uint8)
+
+                    rgba_arr = np.concatenate([rgb_arr, alpha[:, :, np.newaxis]], axis=2)
+                    pil_frame = Image.fromarray(rgba_arr, 'RGBA')
+                else:
+                    pil_frame = frame.convert('RGBA')
+
+                # 缩放到合适大小（限制高度 200px 以内，保持比例）
+                target_h = 200
+                w, h = pil_frame.size
+                if h > target_h:
+                    scale = target_h / h
+                    new_w = max(1, int(w * scale))
+                    pil_frame = pil_frame.resize((new_w, target_h), Image.LANCZOS)
+
+                # PIL → pygame Surface
+                mode = pil_frame.mode
+                size = pil_frame.size
+                data = pil_frame.tobytes()
+                surf = pygame.image.fromstring(data, size, mode)
+                frames.append(surf)
+
+            if frames:
+                groups = {anim_name: frames}
+                _sprite_cache.update(groups)
+                for an, f_list in groups.items():
+                    _flipped_cache[an] = [pygame.transform.flip(f, True, False) for f in f_list]
+                loaded_any = True
+                print(f'  [GIF] {fname}: {n_frames} frames, {frames[0].get_width()}x{frames[0].get_height()}')
+
+        except Exception as e:
+            print(f'  [GIF] Failed to load {fname}: {e}')
+
+    if loaded_any:
+        _use_sprites = True
+        return True
+    return False
+
+
 def has_sprites():
     return _use_sprites
 
@@ -88,6 +184,7 @@ def _draw_sprite(surface, pet):
         frames = _sprite_cache.get(B_IDLE)
         anim = B_IDLE
     if not frames:
+        _draw_default(surface, pet)  # 无 GIF/精灵帧时回退到程序绘制
         return
 
     speed = _get_anim_speed(anim)
