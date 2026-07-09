@@ -45,6 +45,9 @@ class Pet:
 
         self.feedback_items = []
 
+        # 单词间隔（默认从配置，可在运行时修改并持久化）
+        self.word_interval = WORD_INTERVAL
+
         # 尝试加载存档
         self._load()
 
@@ -269,6 +272,7 @@ class Pet:
             'mood': self.mood,
             'energy': self.energy,
             'direction': self.direction,
+            'word_interval': self.word_interval,
         }
         try:
             with open(SAVE_FILE, 'w', encoding='utf-8') as f:
@@ -289,6 +293,7 @@ class Pet:
             self.mood = data.get('mood', self.mood)
             self.energy = data.get('energy', self.energy)
             self.direction = data.get('direction', self.direction)
+            self.word_interval = data.get('word_interval', self.word_interval)
             self._clamp_position()
         except Exception:
             pass

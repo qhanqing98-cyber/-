@@ -348,6 +348,8 @@ def _do_set_interval(pet):
 
     if result is not None:
         WORD_INTERVAL = result
+        pet.word_interval = result
+        pet.save()  # 持久化
         pet.add_feedback(f'⏱ {result}秒', (100, 200, 255), 2)
         pet.add_particles((100, 200, 255), 6)
 
@@ -373,6 +375,8 @@ def main():
     character.load_gifs()
 
     pet = Pet()
+    global WORD_INTERVAL
+    WORD_INTERVAL = pet.word_interval  # 使用持久化的间隔值
     word_list = WordList()
     menu = ContextMenu()
     clock = pygame.time.Clock()
@@ -458,13 +462,21 @@ def main():
                         _do_set_interval(pet)
                     continue
 
-                if ev.button == 1 and over_pet:
-                    # 单词气泡激活时：点击宠物关闭气泡
+                if ev.button == 1:
+                    # 单词气泡激活时：点击气泡区域即可关闭
                     if pet.word_bubble_active and word_list.has_words():
-                        pet.word_bubble_active = False
-                        word_list.advance()
-                        pet.word_timer = 0.0
-                    else:
+                        # 气泡大致在宠物上方 30~230px 范围内
+                        bubble_cx = pet.x
+                        bubble_cy_top = pet.y - 230
+                        bubble_cy_bot = pet.y - 30
+                        if (abs(cx - bubble_cx) < 150 and
+                            bubble_cy_top <= cy <= bubble_cy_bot):
+                            pet.word_bubble_active = False
+                            word_list.advance()
+                            pet.word_timer = 0.0
+                            continue  # 不触发拖动和开心
+
+                    if over_pet:
                         pet.is_dragging = True
                         pet.drag_offset_x = cx - pet.x
                         pet.drag_offset_y = cy - pet.y
