@@ -90,8 +90,8 @@ class ContextMenu:
         self.items = [
             ('📖 导入单词表', 'import_words'),
             ('🍜 Feed', 'feed'),
-            ('❤️ Pet', 'pet'),
             ('❌ Quit', 'quit'),
+            ('❤️ Pet', 'pet'),
         ]
         self.font = None
         self.hover_index = -1

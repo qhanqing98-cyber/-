@@ -5,7 +5,7 @@ from ctypes import wintypes
 
 # ——— 窗口参数 ———
 WINDOW_WIDTH = 450
-WINDOW_HEIGHT = 450
+WINDOW_HEIGHT = 500
 TRANSPARENT_COLOR = (255, 0, 255)  # 品红作为透明键
 FPS = 60
 
@@ -19,10 +19,10 @@ DEFAULT_PET_Y = SCREEN_HEIGHT - WINDOW_HEIGHT - 40
 
 # ——— 宠物在窗口内的绘制坐标 ———
 PET_CENTER_X = WINDOW_WIDTH // 2          # 110
-PET_CENTER_Y = WINDOW_HEIGHT - 80          # 140（留出跳跃空间）
+PET_CENTER_Y = WINDOW_HEIGHT - 150          # 留出下半部分空间（大 GIF 角色）
 
 # ——— 鼠标碰撞半径 ———
-HIT_RADIUS = 48
+HIT_RADIUS = 70
 
 # ——— 状态衰减 (每帧 / 60fps) ———
 HUNGER_DECAY = 1.0 / 6000    # 每 100 秒 -1

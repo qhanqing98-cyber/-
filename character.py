@@ -122,6 +122,8 @@ def load_gifs(gif_dir='gifs'):
                 size = pil_frame.size
                 data = pil_frame.tobytes()
                 surf = pygame.image.fromstring(data, size, mode)
+                # 翻转使角色默认朝右（GIF 源默认朝左）
+                surf = pygame.transform.flip(surf, True, False)
                 frames.append(surf)
 
             if frames:
