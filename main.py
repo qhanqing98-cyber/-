@@ -81,10 +81,10 @@ class ContextMenu:
         self.menu_x = 0
         self.menu_y = 0
         self.item_h = 32
-        self.item_w = 100
-        self.pad = 6
+        self.item_w = 140
+        self.pad = 8
         self.scrollbar_w = 6
-        self.max_visible = 3
+        self.max_visible = 99  # 默认全部显示，超出时限制在窗口高度内
         self.scroll_offset = 0
         self.selected_index = 0
         self.items = [
@@ -98,7 +98,13 @@ class ContextMenu:
 
     @property
     def _visible_count(self):
-        return min(len(self.items), self.max_visible)
+        """可用窗口高度内能完整显示的项数"""
+        # 先从总项数限制
+        n = min(len(self.items), self.max_visible)
+        # 再从窗口高度限制（菜单要能完全显示）
+        max_h = WINDOW_HEIGHT - self.pad * 2
+        max_by_height = max(1, max_h // self.item_h)
+        return min(n, max_by_height)
 
     @property
     def _menu_w(self):
