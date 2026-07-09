@@ -48,20 +48,5 @@ B_HAPPY = 'happy'
 B_SAD = 'sad'
 B_SURPRISED = 'surprised'
 
-# ——— 默认角色颜色 ———
-BODY_COLOR = (245, 230, 211)       # #F5E6D3 暖奶油色
-BELLY_COLOR = (255, 245, 235)      # #FFF5EB 浅肚子
-EAR_COLOR = (232, 196, 168)        # #E8C4A8 耳朵
-INNER_EAR_COLOR = (245, 200, 180)  # 内耳粉色
-EYE_COLOR = (60, 50, 40)           # 深棕眼睛
-CHEEK_COLOR = (255, 182, 193)      # #FFB6C1 腮红
-NOSE_COLOR = (255, 150, 150)       # 粉鼻子
-MOUTH_COLOR = (100, 80, 70)        # 嘴色
-WHISKER_COLOR = (180, 170, 160)    # 胡须
-SLEEP_Z_COLOR = (200, 180, 255)    # Z 颜色
-
-# ——— 精灵图目录 ———
-SPRITES_DIR = 'sprites'
-
 # ——— 单词学习 ———
 WORD_INTERVAL = 150# 每 3弹出一个单词（单位：秒）

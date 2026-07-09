@@ -322,10 +322,7 @@ def main():
 
     hwnd = _get_hwnd()
     _set_window_transparent(hwnd)
-    character.load_sprites()
-    if not character.load_gifs():
-        # 无 GIF 时尝试加载传统精灵图 PNG
-        character.load_sprites()
+    character.load_gifs()
 
     pet = Pet()
     word_list = WordList()
