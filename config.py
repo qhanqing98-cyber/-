@@ -25,11 +25,11 @@ PET_CENTER_Y = WINDOW_HEIGHT - 150          # 留出下半部分空间（大 GIF
 HIT_RADIUS = 70
 
 # ——— 状态衰减 (每帧 / 60fps) ———
-HUNGER_DECAY = 1.0 / 6000    # 每 100 秒 -1
-MOOD_DECAY   = 1.0 / 9000    # 每 150 秒 -1
-ENERGY_WALK_DECAY = 1.0 / 1800   # 行走每 30 秒 -1
-ENERGY_IDLE_GAIN = 1.0 / 120    # 空闲每 2 秒 +1
-ENERGY_SLEEP_GAIN = 1.0 / 30    # 睡眠每 0.5 秒 +1
+HUNGER_DECAY = 1.0 / 600     # 每 10 秒 -1
+MOOD_DECAY   = 1.0 / 1200    # 每 20 秒 -1
+ENERGY_WALK_DECAY = 1.0 / 300    # 行走每 5 秒 -1
+ENERGY_IDLE_GAIN = 1.0 / 60      # 空闲每 1 秒 +1
+ENERGY_SLEEP_GAIN = 1.0 / 15     # 睡眠每 0.25 秒 +1
 
 # ——— 互动回复量 ———
 CLICK_MOOD_BOOST = 10

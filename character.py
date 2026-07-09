@@ -84,6 +84,13 @@ def load_gifs(gif_dir='gifs'):
                     new_w = max(1, int(w * scale))
                     pil_frame = pil_frame.resize((new_w, target_h), Image.LANCZOS)
 
+                # 叠加到品红背景上，消除半透明边缘的紫边
+                rgba_arr = np.array(pil_frame, dtype=np.uint8)  # (H, W, 4)
+                alpha = rgba_arr[:,:,3]
+                rgba_arr[alpha < 128] = [255, 0, 255, 255]  # 半透明→品红（颜色键透明）
+                rgba_arr[alpha >= 128, 3] = 255             # 不透明→全实心
+                pil_frame = Image.fromarray(rgba_arr, 'RGBA').convert('RGB')
+
                 # PIL → pygame Surface
                 mode = pil_frame.mode
                 size = pil_frame.size
@@ -300,10 +307,6 @@ def draw_status(surface, pet):
 
             pygame.draw.rect(fill_surface, gradient_start, (0, 0, fill_w, bar_h), 0, 4)
             surface.blit(fill_surface, (bar_x, bar_y))
-
-        num_font = pygame.font.SysFont('simsun', 10)
-        num = num_font.render(f'{val:.0f}', True, (200, 200, 200))
-        surface.blit(num, (bar_x + bar_w + 4, ly + 2))
 
 
 # ════════════════════════════════════════════
