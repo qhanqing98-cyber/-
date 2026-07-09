@@ -83,18 +83,21 @@ class ContextMenu:
         self.item_h = 32
         self.item_w = 140
         self.pad = 8
-        self.scrollbar_w = 6
-        self.max_visible = 99  # 默认全部显示，超出时限制在窗口高度内
+        self.scrollbar_w = 14  # 加宽，容纳 ▲/▼ 按钮
+        self.max_visible = 4  # 超过 4 项可滚动
         self.scroll_offset = 0
         self.selected_index = 0
         self.items = [
             ('📖 导入单词表', 'import_words'),
+            ('⏱ 单词间隔', 'set_interval'),
             ('🍜 Feed', 'feed'),
-            ('❌ Quit', 'quit'),
             ('❤️ Pet', 'pet'),
+            ('❌ Quit', 'quit'),
         ]
         self.font = None
         self.hover_index = -1
+        self._scroll_btn_up = None   # 屏幕坐标 rect (▲)
+        self._scroll_btn_down = None # 屏幕坐标 rect (▼)
 
     @property
     def _visible_count(self):
@@ -255,9 +258,24 @@ class ContextMenu:
             sb_x = dx + w - self.scrollbar_w - 4
             sb_y = dy + 4
             sb_h = h - 8
+            # 背景槽
             pygame.draw.rect(surf, (50, 50, 55), (sb_x, sb_y, self.scrollbar_w, sb_h), 0, 2)
-            thumb_h = max(12, sb_h * self.max_visible // total)
-            thumb_y = sb_y + (sb_h - thumb_h) * self.scroll_offset // (total - self.max_visible)
+            # ▲ 上滚按钮
+            btn_h = 12
+            self._scroll_btn_up = (self.menu_x + sb_x - dx, self.menu_y + sb_y - dy, self.scrollbar_w, btn_h)
+            pygame.draw.rect(surf, (80, 80, 90), self._scroll_btn_up, 0, 2)
+            up_font = pygame.font.SysFont('simsun', 10)
+            up_txt = up_font.render('▲', True, (200, 200, 200))
+            surf.blit(up_txt, (sb_x + 2, sb_y + 1))
+            # ▼ 下滚按钮
+            self._scroll_btn_down = (self.menu_x + sb_x - dx, self.menu_y + sb_y + sb_h - btn_h - dy, self.scrollbar_w, btn_h)
+            pygame.draw.rect(surf, (80, 80, 90), self._scroll_btn_down, 0, 2)
+            dn_txt = up_font.render('▼', True, (200, 200, 200))
+            surf.blit(dn_txt, (sb_x + 2, sb_y + sb_h - btn_h + 1))
+            # 滑块
+            thumb_track_h = sb_h - btn_h * 2
+            thumb_h = max(12, thumb_track_h * self.max_visible // total)
+            thumb_y = sb_y + btn_h + (thumb_track_h - thumb_h) * self.scroll_offset // (total - self.max_visible)
             thumb_surface = pygame.Surface((self.scrollbar_w, thumb_h), pygame.SRCALPHA)
             self._draw_rounded_rect(thumb_surface, (100, 100, 110), (0, 0, self.scrollbar_w, thumb_h), 2)
             surf.blit(thumb_surface, (sb_x, thumb_y))
@@ -302,6 +320,36 @@ def _do_import_words(pet, word_list):
         pet.add_feedback(f'✅ {msg}', (100, 255, 100), 1)
     else:
         pet.add_feedback(f'❌ {msg}', (255, 100, 100), 1)
+
+
+def _do_set_interval(pet):
+    """打开输入框设置单词间隔时间"""
+    global WORD_INTERVAL
+    try:
+        import tkinter as tk
+        from tkinter import simpledialog
+    except ImportError:
+        pet.add_feedback('❌', (255, 100, 100), 3)
+        return
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
+    try:
+        result = simpledialog.askinteger(
+            '设置单词间隔',
+            f'输入间隔秒数（当前: {WORD_INTERVAL} 秒）:',
+            initialvalue=WORD_INTERVAL,
+            minvalue=10,
+            maxvalue=3600,
+        )
+    finally:
+        root.destroy()
+
+    if result is not None:
+        WORD_INTERVAL = result
+        pet.add_feedback(f'⏱ {result}秒', (100, 200, 255), 2)
+        pet.add_particles((100, 200, 255), 6)
 
 
 def main():
@@ -379,6 +427,22 @@ def main():
 
             elif ev.type == pygame.MOUSEBUTTONDOWN:
                 if menu.active:
+                    if ev.button == 4:    # 滚轮上滑
+                        menu.scroll(1)
+                        continue
+                    elif ev.button == 5:  # 滚轮下滑
+                        menu.scroll(-1)
+                        continue
+                    # 检查是否点击了 ▲/▼ 滚动按钮
+                    if menu._scroll_btn_up and menu._scroll_btn_down:
+                        ux, uy, uw, uh = menu._scroll_btn_up
+                        dx_, dy_, dw_, dh_ = menu._scroll_btn_down
+                        if ux <= cx <= ux + uw and uy <= cy <= uy + uh:
+                            menu.scroll(1)
+                            continue
+                        if dx_ <= cx <= dx_ + dw_ and dy_ <= cy <= dy_ + dh_:
+                            menu.scroll(-1)
+                            continue
                     action = menu.hit_test(cx, cy)
                     if action == 'feed':
                         pet.on_feed()
@@ -389,6 +453,9 @@ def main():
                     elif action == 'import_words':
                         menu.active = False
                         _do_import_words(pet, word_list)
+                    elif action == 'set_interval':
+                        menu.active = False
+                        _do_set_interval(pet)
                     continue
 
                 if ev.button == 1 and over_pet:

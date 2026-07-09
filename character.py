@@ -123,9 +123,9 @@ _anim_timers = {}
 
 def _get_anim_speed(anim_name):
     speeds = {
-        B_IDLE: 8,
+        B_IDLE: 3,
         B_WALK: 3,
-        B_SLEEP: 12,
+        B_SLEEP: 3,
         B_HAPPY: 4,
         B_SAD: 6,
         B_SURPRISED: 4,
