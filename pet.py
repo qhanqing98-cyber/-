@@ -22,6 +22,8 @@ class Pet:
         self.prev_behavior = B_IDLE
         self.direction = 1
         self.frame = 0
+        self.anim_frame = 0
+        self.anim_timer = 0.0
         self.animation_finished = True
         self.eval_timer = 0
         self.is_hovered = False
@@ -37,19 +39,32 @@ class Pet:
         self.min_y_scrn = 0
         self.max_y_scrn = SCREEN_HEIGHT - WINDOW_HEIGHT // 2
 
+        self.feedback_items = []
+
         # 尝试加载存档
         self._load()
 
+    ANIM_FPS = 10  # 精灵图动画帧率（帧/秒）
+
     # ─── 主更新 ────────────────────────────────
 
-    def update(self, frozen=False):
+    def update(self, frozen=False, dt=1.0/60):
         """每帧调用，更新状态和位置。frozen=True 时冻结行为（菜单打开时用）"""
         self._decay_states()
         if not frozen:
             self._evaluate_behavior()
             self._execute_behavior()
         self.frame += 1
+
+        # 时间驱动动画帧（不受实际帧率波动影响）
+        self.anim_timer += dt
+        frame_duration = 1.0 / self.ANIM_FPS
+        while self.anim_timer >= frame_duration:
+            self.anim_timer -= frame_duration
+            self.anim_frame += 1
+
         self._update_z_effect()
+        self._update_feedback()
 
     def _decay_states(self):
         self.hunger = max(0, self.hunger - HUNGER_DECAY)
@@ -78,6 +93,8 @@ class Pet:
             self.prev_behavior = self.behavior
             self.behavior = new_behavior
             self.frame = 0
+            self.anim_frame = 0
+            self.anim_timer = 0.0
             self.animation_finished = False
 
         # 行走时随机换方向
@@ -125,6 +142,8 @@ class Pet:
         # 回到空闲
         self.behavior = B_IDLE
         self.frame = 0
+        self.anim_frame = 0
+        self.anim_timer = 0.0
 
     # ─── Z 特效 ────────────────────────────────
 
@@ -136,6 +155,46 @@ class Pet:
             self.sleep_z_timer = 0
             self.sleep_z_visible = False
 
+    def _update_feedback(self):
+        self.feedback_items = [item for item in self.feedback_items if item['life'] > 0]
+        for item in self.feedback_items:
+            item['life'] -= 1
+            item['y'] -= item['vy']
+            item['x'] += item['vx']
+            item['alpha'] = item['life'] / item['max_life']
+
+    def add_feedback(self, text, color, count=5):
+        for _ in range(count):
+            self.feedback_items.append({
+                'text': text,
+                'color': color,
+                'x': (PET_CENTER_X - 30) + (PET_CENTER_X + 30) * (random.random() - 0.5),
+                'y': PET_CENTER_Y - 30,
+                'vx': (random.random() - 0.5) * 2,
+                'vy': 1 + random.random() * 1.5,
+                'life': 60 + random.randint(0, 30),
+                'max_life': 90,
+                'alpha': 1.0,
+                'type': 'text'
+            })
+
+    def add_particles(self, color, count=8):
+        for _ in range(count):
+            angle = random.random() * math.pi * 2
+            speed = 2 + random.random() * 3
+            self.feedback_items.append({
+                'color': color,
+                'x': PET_CENTER_X,
+                'y': PET_CENTER_Y - 20,
+                'vx': math.cos(angle) * speed,
+                'vy': math.sin(angle) * speed - 2,
+                'life': 40 + random.randint(0, 20),
+                'max_life': 60,
+                'alpha': 1.0,
+                'type': 'particle',
+                'size': 3 + random.random() * 4
+            })
+
     # ─── 互动 ──────────────────────────────────
 
     def on_click(self):
@@ -144,6 +203,8 @@ class Pet:
         self.animation_finished = True  # 打断当前动画
         self.behavior = B_HAPPY
         self.frame = 0
+        self.anim_frame = 0
+        self.anim_timer = 0.0
         self.happy_timer = 30  # 0.5 秒 (30 帧)
         self.animation_finished = False
 
@@ -151,16 +212,22 @@ class Pet:
         """喂食"""
         self.hunger = min(100, self.hunger + FEED_HUNGER_BOOST)
         self.mood = min(100, self.mood + 3)
+        self.add_feedback('\u1F34E', (255, 160, 80), 3)
+        self.add_particles((255, 200, 100), 6)
 
     def on_pet(self):
         """抚摸"""
         self.mood = min(100, self.mood + PET_MOOD_BOOST)
+        self.add_feedback('\u2764\uFE0F', (255, 120, 160), 4)
+        self.add_particles((255, 150, 200), 8)
 
     def on_right_click(self):
         """右键 → 惊喜反应"""
         self.animation_finished = True
         self.behavior = B_SURPRISED
         self.frame = 0
+        self.anim_frame = 0
+        self.anim_timer = 0.0
         self.surprised_timer = 15
         self.animation_finished = False
 

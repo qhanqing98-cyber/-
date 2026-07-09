@@ -22,12 +22,12 @@ PET_CENTER_X = WINDOW_WIDTH // 2          # 110
 PET_CENTER_Y = WINDOW_HEIGHT - 80          # 140（留出跳跃空间）
 
 # ——— 鼠标碰撞半径 ———
-HIT_RADIUS = 60
+HIT_RADIUS = 48
 
 # ——— 状态衰减 (每帧 / 60fps) ———
-HUNGER_DECAY = 1.0 / 600    # 每 10 秒 -1
-MOOD_DECAY   = 1.0 / 900    # 每 15 秒 -1
-ENERGY_WALK_DECAY = 1.0 / 180   # 行走每 3 秒 -1
+HUNGER_DECAY = 1.0 / 6000    # 每 100 秒 -1
+MOOD_DECAY   = 1.0 / 9000    # 每 150 秒 -1
+ENERGY_WALK_DECAY = 1.0 / 1800   # 行走每 30 秒 -1
 ENERGY_IDLE_GAIN = 1.0 / 120    # 空闲每 2 秒 +1
 ENERGY_SLEEP_GAIN = 1.0 / 30    # 睡眠每 0.5 秒 +1
 

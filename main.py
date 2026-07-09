@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # main.py — 桌宠主程序
 # 启动: python main.py  或双击 run_pet.bat
 
@@ -78,19 +79,20 @@ class ContextMenu:
         self.active = False
         self.menu_x = 0
         self.menu_y = 0
-        self.item_h = 28
-        self.item_w = 88
-        self.pad = 4
-        self.scrollbar_w = 8
-        self.max_visible = 3          # 最多同时显示几个
-        self.scroll_offset = 0        # 第一个可见项的索引
+        self.item_h = 32
+        self.item_w = 100
+        self.pad = 6
+        self.scrollbar_w = 6
+        self.max_visible = 3
+        self.scroll_offset = 0
         self.selected_index = 0
         self.items = [
-            ('\u2192 Feed', 'feed'),
-            ('\u2665 Pet', 'pet'),
-            ('\u2716 Quit', 'quit'),
+            ('\u1F35C Feed', 'feed'),
+            ('\u2764\uFE0F Pet', 'pet'),
+            ('\u274C Quit', 'quit'),
         ]
         self.font = None
+        self.hover_index = -1
 
     @property
     def _visible_count(self):
@@ -173,6 +175,32 @@ class ContextMenu:
         self.active = False
         return None
 
+    def update_hover(self, sx, sy):
+        if not self.active:
+            self.hover_index = -1
+            return
+        w = self._menu_w
+        h = self._menu_h
+        if not (self.menu_x <= sx <= self.menu_x + w and
+                self.menu_y <= sy <= self.menu_y + h):
+            self.hover_index = -1
+            return
+        rel_idx = (sy - self.menu_y - self.pad) // self.item_h
+        idx = self.scroll_offset + rel_idx
+        if 0 <= idx < len(self.items) and rel_idx < self._visible_count:
+            self.hover_index = idx
+        else:
+            self.hover_index = -1
+
+    def _draw_rounded_rect(self, surf, color, rect, radius):
+        x, y, w, h = rect
+        pygame.draw.rect(surf, color, (x + radius, y, w - radius * 2, h))
+        pygame.draw.rect(surf, color, (x, y + radius, w, h - radius * 2))
+        pygame.draw.circle(surf, color, (x + radius, y + radius), radius)
+        pygame.draw.circle(surf, color, (x + w - radius, y + radius), radius)
+        pygame.draw.circle(surf, color, (x + radius, y + h - radius), radius)
+        pygame.draw.circle(surf, color, (x + w - radius, y + h - radius), radius)
+
     def draw(self, surf, win_l, win_t):
         if not self.active:
             return
@@ -180,10 +208,12 @@ class ContextMenu:
         h = self._menu_h
         dx = self.menu_x - win_l
         dy = self.menu_y - win_t
+        radius = 8
 
-        # 菜单背景
-        pygame.draw.rect(surf, (240, 240, 240), (dx, dy, w, h))
-        pygame.draw.rect(surf, (180, 180, 180), (dx, dy, w, h), 1)
+        bg_surface = pygame.Surface((w, h), pygame.SRCALPHA)
+        self._draw_rounded_rect(bg_surface, (30, 30, 35, 240), (0, 0, w, h), radius)
+        pygame.draw.rect(bg_surface, (60, 60, 70, 200), (0, 0, w, h), 1, radius)
+        surf.blit(bg_surface, (dx, dy))
 
         if self.font is None:
             self.font = pygame.font.SysFont('simsun', 14)
@@ -195,31 +225,34 @@ class ContextMenu:
                 break
             label, _ = self.items[i_abs]
             iy = dy + self.pad + i_rel * self.item_h
+            ix = dx + self.pad
 
-            # 高亮逻辑
-            if i_abs == self.selected_index:
-                bg = (180, 210, 255)          # 蓝色高亮
+            if i_abs == self.hover_index:
+                item_bg = pygame.Surface((self.item_w, self.item_h - 2), pygame.SRCALPHA)
+                self._draw_rounded_rect(item_bg, (60, 120, 200, 150), (0, 0, self.item_w, self.item_h - 2), 4)
+                surf.blit(item_bg, (ix, iy))
+                text_color = (255, 255, 255)
             elif i_abs == total - 1 and 'Quit' in label:
-                bg = (255, 220, 220)          # Quit 粉色
+                item_bg = pygame.Surface((self.item_w, self.item_h - 2), pygame.SRCALPHA)
+                self._draw_rounded_rect(item_bg, (200, 60, 80, 100), (0, 0, self.item_w, self.item_h - 2), 4)
+                surf.blit(item_bg, (ix, iy))
+                text_color = (240, 200, 200)
             else:
-                bg = (220, 220, 220)
+                text_color = (230, 230, 230)
 
-            pygame.draw.rect(surf, bg,
-                             (dx + self.pad, iy, self.item_w, self.item_h - 2))
-            txt = self.font.render(label, True, (40, 40, 40))
-            surf.blit(txt, (dx + self.pad + 6, iy + 4))
+            txt = self.font.render(label, True, text_color)
+            surf.blit(txt, (ix + 6, iy + 6))
 
-        # 滚动条（仅在项数超出可见范围时显示）
         if total > self.max_visible:
-            sb_x = dx + w - self.scrollbar_w - 2
-            sb_y = dy + 2
-            sb_h = h - 4
-            # 轨道
-            pygame.draw.rect(surf, (200, 200, 200), (sb_x, sb_y, self.scrollbar_w, sb_h))
-            # 滑块
+            sb_x = dx + w - self.scrollbar_w - 4
+            sb_y = dy + 4
+            sb_h = h - 8
+            pygame.draw.rect(surf, (50, 50, 55), (sb_x, sb_y, self.scrollbar_w, sb_h), 0, 2)
             thumb_h = max(12, sb_h * self.max_visible // total)
             thumb_y = sb_y + (sb_h - thumb_h) * self.scroll_offset // (total - self.max_visible)
-            pygame.draw.rect(surf, (160, 160, 160), (sb_x, thumb_y, self.scrollbar_w, thumb_h))
+            thumb_surface = pygame.Surface((self.scrollbar_w, thumb_h), pygame.SRCALPHA)
+            self._draw_rounded_rect(thumb_surface, (100, 100, 110), (0, 0, self.scrollbar_w, thumb_h), 2)
+            surf.blit(thumb_surface, (sb_x, thumb_y))
 
 
 # ════════════════════════════════════════════
@@ -255,7 +288,8 @@ def main():
 
     running = True
     while running:
-        clock.tick(FPS)
+        dt_ms = clock.tick(FPS)
+        dt = dt_ms / 1000.0  # 秒
         cx, cy = _get_cursor_screen_pos()
         over_pet = pet.hit_test(cx, cy)
 
@@ -321,6 +355,7 @@ def main():
                     pet.is_dragging = False
 
             elif ev.type == pygame.MOUSEMOTION:
+                menu.update_hover(cx, cy)
                 if pet.is_dragging:
                     pet.x = cx - pet.drag_offset_x
                     pet.y = cy - pet.drag_offset_y
@@ -328,7 +363,7 @@ def main():
                     _move_window(hwnd, pet.x - PET_CENTER_X, pet.y - PET_CENTER_Y)
 
         # ── 更新 ──
-        pet.update(frozen=menu.active)
+        pet.update(frozen=menu.active, dt=dt)
 
         # ── 窗口跟随 ──
         if not pet.is_dragging and not menu.active:
@@ -338,6 +373,7 @@ def main():
         screen.fill(TRANSPARENT_COLOR)
         character.draw_pet(screen, pet)
         character.draw_status(screen, pet)
+        character.draw_feedback(screen, pet)
 
         if menu.active:
             menu.draw(screen, pet.x - PET_CENTER_X, pet.y - PET_CENTER_Y)

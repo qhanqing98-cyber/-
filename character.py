@@ -9,6 +9,7 @@ from config import *
 
 # ─── 精灵图缓存 ──────────────────────────────
 _sprite_cache = {}
+_flipped_cache = {}
 _use_sprites = False
 
 
@@ -17,8 +18,9 @@ _use_sprites = False
 # ════════════════════════════════════════════
 
 def load_sprites():
-    global _sprite_cache, _use_sprites
+    global _sprite_cache, _flipped_cache, _use_sprites
     _sprite_cache.clear()
+    _flipped_cache.clear()
     _use_sprites = False
     sprites_path = os.path.join(os.path.dirname(__file__), SPRITES_DIR)
     if not os.path.isdir(sprites_path):
@@ -34,11 +36,12 @@ def load_sprites():
         if len(parts) != 2 or not parts[1].isdigit():
             continue
         anim = parts[0]
-        groups.setdefault(anim, []).append(
-            pygame.image.load(os.path.join(sprites_path, fname)).convert_alpha()
-        )
+        img = pygame.image.load(os.path.join(sprites_path, fname)).convert_alpha()
+        groups.setdefault(anim, []).append(img)
     if groups:
         _sprite_cache = groups
+        for anim_name, frames in groups.items():
+            _flipped_cache[anim_name] = [pygame.transform.flip(f, True, False) for f in frames]
         _use_sprites = True
 
 
@@ -57,17 +60,50 @@ def draw_pet(surface, pet):
         _draw_default(surface, pet)
 
 
+_anim_timers = {}
+
+def _get_anim_speed(anim_name):
+    speeds = {
+        B_IDLE: 8,
+        B_WALK: 3,
+        B_SLEEP: 12,
+        B_HAPPY: 4,
+        B_SAD: 6,
+        B_SURPRISED: 4,
+        'happy_jump': 3,
+        'happy_land': 4,
+    }
+    return speeds.get(anim_name, 6)
+
+
 def _draw_sprite(surface, pet):
+    global _anim_timers
     anim = pet.get_anim_name()
+
+    if anim not in _anim_timers:
+        _anim_timers[anim] = 0
+
     frames = _sprite_cache.get(anim)
     if not frames:
         frames = _sprite_cache.get(B_IDLE)
+        anim = B_IDLE
     if not frames:
         return
-    idx = (pet.frame // 6) % len(frames)
-    img = frames[idx]
+
+    speed = _get_anim_speed(anim)
+    _anim_timers[anim] += 1
+
+    idx = (_anim_timers[anim] // speed) % len(frames)
+
     if pet.direction < 0:
-        img = pygame.transform.flip(img, True, False)
+        flipped_frames = _flipped_cache.get(anim)
+        if flipped_frames:
+            img = flipped_frames[idx]
+        else:
+            img = frames[idx]
+    else:
+        img = frames[idx]
+
     rect = img.get_rect(center=(PET_CENTER_X, PET_CENTER_Y))
     surface.blit(img, rect)
 
@@ -281,50 +317,140 @@ def _draw_z(surface, x, y):
     surface.blit(z_big, (x + 24, y - 30))
 
 
+def draw_feedback(surface, pet):
+    """绘制互动反馈（粒子和浮动文字）"""
+    if not pet.feedback_items:
+        return
+    font = pygame.font.SysFont('simsun', 16, bold=True)
+    for item in pet.feedback_items:
+        alpha = int(item['alpha'] * 255)
+        if item['type'] == 'text':
+            r, g, b = item['color']
+            txt = font.render(item['text'], True, (r, g, b, alpha))
+            surface.blit(txt, (item['x'], item['y']))
+        elif item['type'] == 'particle':
+            r, g, b = item['color']
+            s = pygame.Surface((item['size'] * 2, item['size'] * 2), pygame.SRCALPHA)
+            pygame.draw.circle(s, (r, g, b, alpha), (item['size'], item['size']), item['size'])
+            surface.blit(s, (item['x'] - item['size'], item['y'] - item['size']))
+
+
 # ════════════════════════════════════════════
 # 悬停状态面板
 # ════════════════════════════════════════════
 
+def _draw_rounded_bar(self, surf, color, x, y, w, h, radius, progress):
+    bg = pygame.Surface((w, h), pygame.SRCALPHA)
+    pygame.draw.rect(bg, (50, 50, 55, 180), (0, 0, w, h), 0, radius)
+    surf.blit(bg, (x, y))
+
+    if progress <= 0:
+        return
+
+    fill_w = int(w * progress)
+    fill_surface = pygame.Surface((fill_w, h), pygame.SRCALPHA)
+
+    if progress < 0.3:
+        gradient_color = (255, 80, 80)
+    elif progress < 0.6:
+        gradient_color = (255, 200, 80)
+    else:
+        gradient_color = (100, 220, 100)
+
+    for i in range(fill_w):
+        alpha = 180 + 75 * (i / fill_w)
+        r, g, b = gradient_color
+        fill_surface.set_at((i, h // 2), (r, g, b, int(alpha)))
+
+    pygame.draw.rect(fill_surface, gradient_color, (0, 0, fill_w, h), 0, radius)
+    highlight = pygame.Surface((fill_w, h // 2), pygame.SRCALPHA)
+    pygame.draw.rect(highlight, (255, 255, 255, 30), (0, 0, fill_w, h // 2), 0, radius)
+    fill_surface.blit(highlight, (0, 0))
+
+    surf.blit(fill_surface, (x, y))
+
+
 def draw_status(surface, pet):
-    """鼠标悬停时在宠物上方绘制状态面板"""
     if not pet.is_hovered:
         return
 
     font = pygame.font.SysFont('simsun', 12)
     lines = [
-        ('\u9971\u9913', pet.hunger, (255, 160, 80)),   # 饥饿 orange
-        ('\u5fc3\u60c5', pet.mood, (255, 120, 160)),     # 心情 pink
-        ('\u7cbe\u529b', pet.energy, (120, 200, 255)),   # 精力 blue
+        ('\u9971\u9913', pet.hunger, (255, 160, 80)),
+        ('\u5fc3\u60c5', pet.mood, (255, 120, 160)),
+        ('\u7cbe\u529b', pet.energy, (120, 200, 255)),
     ]
 
-    panel_w = 100
-    bar_w = 50
-    line_h = 16
-    pad = 6
+    panel_w = 120
+    bar_w = 60
+    line_h = 20
+    pad = 8
     panel_h = len(lines) * line_h + pad * 2
+    radius = 8
 
-    # 面板位置：宠物上方偏右
-    px = PET_CENTER_X + 20
-    py = PET_CENTER_Y - 50 - panel_h
+    px = PET_CENTER_X + 25
+    py = PET_CENTER_Y - 40 - panel_h
 
-    # 半透明背景
     bg = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
-    bg.fill((40, 40, 40, 180))
-    pygame.draw.rect(bg, (100, 100, 100, 200), (0, 0, panel_w, panel_h), 1)
+    pygame.draw.rect(bg, (30, 30, 35, 220), (0, 0, panel_w, panel_h), 0, radius)
+    pygame.draw.rect(bg, (60, 60, 70, 150), (0, 0, panel_w, panel_h), 1, radius)
+
+    shadow = pygame.Surface((panel_w + 4, panel_h + 4), pygame.SRCALPHA)
+    pygame.draw.rect(shadow, (0, 0, 0, 60), (2, 2, panel_w, panel_h), 0, radius)
+    surface.blit(shadow, (px - 1, py - 1))
+
     surface.blit(bg, (px, py))
 
     for i, (label, val, color) in enumerate(lines):
         ly = py + pad + i * line_h
-        # 标签
-        txt = font.render(label, True, (220, 220, 220))
-        surface.blit(txt, (px + 4, ly))
-        # 进度条背景
-        bar_x = px + pad + 32
-        pygame.draw.rect(surface, (60, 60, 60), (bar_x, ly + 2, bar_w, 9))
-        # 进度条前景
+
+        icon_font = pygame.font.SysFont('simsun', 14)
+        if label == '\u9971\u9913':
+            icon = icon_font.render('\u1F35C', True, color)
+        elif label == '\u5fc3\u60c5':
+            icon = icon_font.render('\u2764\uFE0F', True, color)
+        else:
+            icon = icon_font.render('\u26A1', True, color)
+        surface.blit(icon, (px + 6, ly - 1))
+
+        txt = font.render(label, True, (230, 230, 230))
+        surface.blit(txt, (px + 24, ly + 1))
+
+        bar_x = px + 55
+        bar_h = 8
+        bar_y = ly + 4
+
+        bar_bg = pygame.Surface((bar_w, bar_h), pygame.SRCALPHA)
+        pygame.draw.rect(bar_bg, (50, 50, 55, 180), (0, 0, bar_w, bar_h), 0, 4)
+        surface.blit(bar_bg, (bar_x, bar_y))
+
         fill_w = int(bar_w * val / 100)
         if fill_w > 0:
-            pygame.draw.rect(surface, color, (bar_x, ly + 2, fill_w, 9))
-        # 数值
-        num = font.render(f'{val:.0f}', True, (255, 255, 255))
-        surface.blit(num, (bar_x + bar_w + 4, ly))
+            fill_surface = pygame.Surface((fill_w, bar_h), pygame.SRCALPHA)
+
+            if val < 30:
+                gradient_start = (255, 80, 80)
+                gradient_end = (255, 120, 120)
+            elif val < 60:
+                gradient_start = (255, 200, 80)
+                gradient_end = (255, 160, 60)
+            else:
+                gradient_start = (100, 220, 100)
+                gradient_end = (80, 180, 80)
+
+            for j in range(fill_w):
+                t = j / fill_w
+                r = int(gradient_start[0] * (1 - t) + gradient_end[0] * t)
+                g = int(gradient_start[1] * (1 - t) + gradient_end[1] * t)
+                b = int(gradient_start[2] * (1 - t) + gradient_end[2] * t)
+                for k in range(bar_h):
+                    fill_surface.set_at((j, k), (r, g, b, 200))
+
+            pygame.draw.rect(fill_surface, (255, 255, 255, 40), (0, 0, fill_w, bar_h // 2), 0, 4)
+
+            pygame.draw.rect(fill_surface, gradient_start, (0, 0, fill_w, bar_h), 0, 4)
+            surface.blit(fill_surface, (bar_x, bar_y))
+
+        num_font = pygame.font.SysFont('simsun', 10)
+        num = num_font.render(f'{val:.0f}', True, (200, 200, 200))
+        surface.blit(num, (bar_x + bar_w + 4, ly + 2))
