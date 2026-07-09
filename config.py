@@ -5,7 +5,7 @@ from ctypes import wintypes
 
 # ——— 窗口参数 ———
 WINDOW_WIDTH = 450
-WINDOW_HEIGHT = 220
+WINDOW_HEIGHT = 450
 TRANSPARENT_COLOR = (255, 0, 255)  # 品红作为透明键
 FPS = 60
 
@@ -64,4 +64,4 @@ SLEEP_Z_COLOR = (200, 180, 255)    # Z 颜色
 SPRITES_DIR = 'sprites'
 
 # ——— 单词学习 ———
-WORD_INTERVAL = 300  # 每 5 分钟弹出一个单词（单位：秒）
+WORD_INTERVAL = 150# 每 3弹出一个单词（单位：秒）
