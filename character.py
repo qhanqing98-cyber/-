@@ -24,7 +24,7 @@ def load_gifs(gif_dir='gifs'):
     若 gifs/ 存在且有 .gif 文件，则加载并启用精灵模式。
     """
     global _sprite_cache, _flipped_cache, _use_sprites
-    gifs_path = os.path.join(os.path.dirname(__file__), gif_dir)
+    gifs_path = os.path.join(get_resource_path(), gif_dir)
     if not os.path.isdir(gifs_path):
         return False
 

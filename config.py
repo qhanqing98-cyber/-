@@ -1,5 +1,7 @@
 # config.py — 桌宠配置常量
 
+import os
+import sys
 import ctypes
 from ctypes import wintypes
 
@@ -49,4 +51,17 @@ B_SAD = 'sad'
 B_SURPRISED = 'surprised'
 
 # ——— 单词学习 ———
-WORD_INTERVAL = 150# 每 3弹出一个单词（单位：秒）
+WORD_INTERVAL = 150  # 每 150 秒弹出一个单词
+
+# ——— 打包路径支持 ———
+def get_resource_path():
+    """返回只读资源目录（打包后为 exe 内部，源码模式为项目目录）"""
+    if getattr(sys, 'frozen', False):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.abspath(__file__))
+
+def get_data_path():
+    """返回可写数据目录（始终为 exe 所在目录，用户存档/单词本放在此处）"""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))

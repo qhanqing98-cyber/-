@@ -4,7 +4,9 @@
 import json
 import os
 
-_DIR = os.path.dirname(os.path.abspath(__file__))
+from config import get_data_path, get_resource_path
+
+_DIR = get_data_path()
 INDEX_FILE = os.path.join(_DIR, 'words_index.json')
 OLD_FILE = os.path.join(_DIR, 'words.json')
 
@@ -105,11 +107,40 @@ class WordList:
             print(f"[words] 从文件系统恢复了 {len(scanned)} 个单词本")
             return
 
+        # 第4步：尝试从打包资源复制初始单词本（仅打包模式生效）
+        if self._copy_bundled_books():
+            scanned = self._scan_books()
+            if scanned:
+                first = scanned[0]
+                self._load_book(first)
+                self._write_index(first, scanned)
+                print(f"[words] 从打包资源复制了 {len(scanned)} 个单词本")
+                return
+
         # 没有任何数据 → 创建默认空本
         self.books = {'默认': {'words': [], 'index': 0}}
         self.active_book = '默认'
         self._save_one_book('默认', self.books['默认'])
         self._write_index('默认', ['默认'])
+
+    def _copy_bundled_books(self):
+        """首次运行时，将打包在 exe 内的单词本文件复制到数据目录（仅打包模式有效）"""
+        res_dir = get_resource_path()
+        if res_dir == _DIR:
+            return False  # 源码模式，无需复制
+        copied = False
+        for fname in os.listdir(res_dir):
+            if fname.startswith('words_') and fname.endswith('.json'):
+                dst = os.path.join(_DIR, fname)
+                if not os.path.exists(dst):
+                    src = os.path.join(res_dir, fname)
+                    try:
+                        with open(src, 'rb') as sf, open(dst, 'wb') as df:
+                            df.write(sf.read())
+                        copied = True
+                    except Exception:
+                        pass
+        return copied
 
     def _load_book(self, name):
         """加载指定单词本到内存。文件不存在时创建空本。"""

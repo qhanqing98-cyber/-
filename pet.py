@@ -6,7 +6,7 @@ import json
 import os
 from config import *
 
-SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'save.json')
+SAVE_FILE = os.path.join(get_data_path(), 'save.json')
 
 
 class Pet:
