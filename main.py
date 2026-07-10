@@ -328,7 +328,7 @@ def _do_import_words(pet, word_list):
 
 
 def _do_switch_book(word_list, pet):
-    """弹出选择对话框切换单词本"""
+    """弹出选择对话框切换或删除单词本"""
     books = word_list.list_books()
     if not books:
         pet.add_feedback('📚 无单词本', (200, 200, 200), 2)
@@ -336,24 +336,50 @@ def _do_switch_book(word_list, pet):
 
     try:
         import tkinter as tk
+        from tkinter import messagebox
     except ImportError:
         return
 
     root = tk.Tk()
-    root.title('选择单词本')
+    root.title('选择/删除单词本')
     root.attributes('-topmost', True)
-    root.geometry(f'300x{min(400, len(books)*40 + 60)}')
+    root.resizable(False, False)
 
     current = word_list.get_active_book_name()
-    tk.Label(root, text=f'当前: {current}', font=('', 11)).pack(pady=8)
+    tk.Label(root, text=f'当前: {current}', font=('', 11)).pack(pady=(10, 4))
 
-    listbox = tk.Listbox(root, font=('', 12), height=min(10, len(books)))
+    # 列表框
+    frame = tk.Frame(root)
+    listbox = tk.Listbox(frame, font=('', 12), width=28, height=min(10, len(books)))
+    scrollbar = tk.Scrollbar(frame, orient=tk.VERTICAL)
+    listbox.config(yscrollcommand=scrollbar.set)
+    scrollbar.config(command=listbox.yview)
+
     for name in books:
         suffix = ' ◀ 当前' if name == current else ''
         listbox.insert(tk.END, f'{name}{suffix}')
-    listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+    listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    if len(books) > 10:
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
 
     chosen = [None]
+
+    def refresh_list():
+        """刷新列表框"""
+        listbox.delete(0, tk.END)
+        nonlocal books
+        books = word_list.list_books()
+        cur = word_list.get_active_book_name()
+        for name in books:
+            suffix = ' ◀ 当前' if name == cur else ''
+            listbox.insert(tk.END, f'{name}{suffix}')
+        # 更新标题
+        for widget in root.winfo_children():
+            if isinstance(widget, tk.Label):
+                widget.config(text=f'当前: {cur}')
+                break
 
     def on_ok():
         sel = listbox.curselection()
@@ -361,28 +387,49 @@ def _do_switch_book(word_list, pet):
             chosen[0] = books[sel[0]]
         root.destroy()
 
+    def on_delete():
+        sel = listbox.curselection()
+        if not sel:
+            return
+        name = books[sel[0]]
+        if not messagebox.askyesno('确认删除', f'确定要删除单词本「{name}」吗？\n\n该操作不可恢复！'):
+            return
+        success, msg = word_list.delete_book(name)
+        if success:
+            refresh_list()
+            if not word_list.list_books():
+                root.destroy()
+                return
+        messagebox.showinfo('提示', msg, parent=root)
+
     def on_double_click(ev):
         on_ok()
 
     listbox.bind('<Double-Button-1>', on_double_click)
-    tk.Button(root, text='确定', command=on_ok, width=10).pack(pady=8)
+
+    # 按钮
+    btn_frame = tk.Frame(root)
+    tk.Button(btn_frame, text='确定', command=on_ok, width=10).pack(side=tk.LEFT, padx=6)
+    tk.Button(btn_frame, text='删除', command=on_delete, width=10, fg='red').pack(side=tk.LEFT, padx=6)
+    btn_frame.pack(pady=(4, 12))
+
     root.protocol('WM_DELETE_WINDOW', root.destroy)
     root.eval('tk::PlaceWindow . center')
 
     root.grab_set()
     root.wait_window()
 
-    if chosen[0] and chosen[0] != current:
+    cur_after = word_list.get_active_book_name()
+    if chosen[0] and chosen[0] != cur_after:
         word_list.switch_book(chosen[0])
-        # 重置气泡定时器，立即显示新本的第一个词
         pet.word_bubble_active = False
-        pet.word_timer = WORD_INTERVAL  # 让气泡马上弹出
+        pet.word_timer = WORD_INTERVAL
         pet.add_feedback(f'📚 {chosen[0]}', (100, 200, 255), 2)
         pet.add_particles((100, 200, 255), 6)
     elif not chosen[0]:
-        pass  # 取消
-    else:
-        pet.add_feedback(f'已经是「{current}」', (200, 200, 200), 2)
+        pass  # 取消或删除后自动关闭
+    elif chosen[0] == cur_after:
+        pet.add_feedback(f'已经是「{cur_after}」', (200, 200, 200), 2)
 
 
 def _do_delete_book(word_list, pet):
@@ -471,6 +518,9 @@ def main():
     global WORD_INTERVAL
     WORD_INTERVAL = pet.word_interval  # 使用持久化的间隔值
     word_list = WordList()
+    # 启动时有单词则尽快弹出第一个词（避免等 150 秒）
+    if word_list.has_words():
+        pet.word_timer = max(pet.word_timer, WORD_INTERVAL - 3)
     menu = ContextMenu()
     clock = pygame.time.Clock()
 
@@ -626,6 +676,7 @@ def main():
         pygame.display.flip()
 
     pet.save()
+    word_list.save()
     pygame.quit()
     sys.exit()
 
