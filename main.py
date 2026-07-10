@@ -89,13 +89,13 @@ class ContextMenu:
         self.scroll_offset = 0
         self.selected_index = 0
         self.items = [
-            ('📖 导入单词表', 'import_words'),
-            ('📚 选择单词本', 'switch_book'),
-            ('🗑 删除单词本', 'delete_book'),
-            ('⏱ 单词间隔', 'set_interval'),
             ('🍜 Feed', 'feed'),
             ('❤️ Pet', 'pet'),
+            ('📚 选择单词本', 'switch_book'),
             ('❌ Quit', 'quit'),
+            ('📖 导入单词表', 'import_words'),
+            ('🗑 删除单词本', 'delete_book'),
+            ('⏱ 单词间隔', 'set_interval'),
         ]
         self.font = None
         self.hover_index = -1
