@@ -81,23 +81,26 @@ class ContextMenu:
         self.active = False
         self.menu_x = 0
         self.menu_y = 0
-        self.item_h = 32
-        self.item_w = 140
+        self.item_h = 43
+        self.item_w = 208
+        self.header_h = 38
         self.pad = 8
-        self.scrollbar_w = 14  # 加宽，容纳 ▲/▼ 按钮
-        self.max_visible = 4  # 超过 4 项可滚动
+        self.scrollbar_w = 8
+        self.max_visible = 5
         self.scroll_offset = 0
         self.selected_index = 0
         self.items = [
-            ('🍜 Feed', 'feed'),
-            ('❤️ Pet', 'pet'),
-            ('📚 选择单词本', 'switch_book'),
-            ('❌ Quit', 'quit'),
-            ('📖 导入单词表', 'import_words'),
-            ('🗑 删除单词本', 'delete_book'),
-            ('⏱ 单词间隔', 'set_interval'),
+            ('喂食', 'feed', '恢复饱食度'),
+            ('摸摸它', 'pet', '提升心情'),
+            ('选择单词本', 'switch_book', '切换学习内容'),
+            ('导入单词表', 'import_words', '支持 TXT / CSV / JSON'),
+            ('设置单词间隔', 'set_interval', '调整提醒频率'),
+            ('删除单词本', 'delete_book', '管理本地词库'),
+            ('退出桌宠', 'quit', '保存并退出'),
         ]
         self.font = None
+        self.hint_font = None
+        self.title_font = None
         self.hover_index = -1
         self._scroll_btn_up = None   # 屏幕坐标 rect (▲)
         self._scroll_btn_down = None # 屏幕坐标 rect (▼)
@@ -108,7 +111,7 @@ class ContextMenu:
         # 先从总项数限制
         n = min(len(self.items), self.max_visible)
         # 再从窗口高度限制（菜单要能完全显示）
-        max_h = WINDOW_HEIGHT - self.pad * 2
+        max_h = WINDOW_HEIGHT - self.pad * 2 - self.header_h
         max_by_height = max(1, max_h // self.item_h)
         return min(n, max_by_height)
 
@@ -118,7 +121,11 @@ class ContextMenu:
 
     @property
     def _menu_h(self):
-        return self._visible_count * self.item_h + self.pad * 2
+        return self.header_h + self._visible_count * self.item_h + self.pad * 2
+
+    @property
+    def _items_top(self):
+        return self.menu_y + self.pad + self.header_h
 
     def show(self, sx, sy, win_l, win_t):
         """弹出菜单，自动避免超出窗口边界"""
@@ -151,6 +158,7 @@ class ContextMenu:
 
     def hide(self):
         self.active = False
+        self.hover_index = -1
 
     def contains(self, sx, sy):
         """返回光标是否在菜单区域内（不改变任何状态）"""
@@ -172,6 +180,29 @@ class ContextMenu:
         elif self.selected_index >= self.scroll_offset + self.max_visible:
             self.selected_index = self.scroll_offset + self.max_visible - 1
 
+    def move_selection(self, delta):
+        """键盘上下选择，自动保持选中项可见。"""
+        self.selected_index = (self.selected_index + delta) % len(self.items)
+        if self.selected_index < self.scroll_offset:
+            self.scroll_offset = self.selected_index
+        elif self.selected_index >= self.scroll_offset + self._visible_count:
+            self.scroll_offset = self.selected_index - self._visible_count + 1
+        self.hover_index = -1
+
+    def activate_selected(self):
+        self.active = False
+        return self.items[self.selected_index][1]
+
+    def _index_at(self, sx, sy):
+        rel_y = sy - self._items_top
+        if rel_y < 0:
+            return None
+        rel_idx = rel_y // self.item_h
+        idx = self.scroll_offset + rel_idx
+        if 0 <= idx < len(self.items) and rel_idx < self._visible_count:
+            return idx
+        return None
+
     def hit_test(self, sx, sy):
         if not self.active:
             return None
@@ -181,12 +212,10 @@ class ContextMenu:
                 self.menu_y <= sy <= self.menu_y + h):
             self.active = False
             return None
-        rel_idx = (sy - self.menu_y - self.pad) // self.item_h
-        idx = self.scroll_offset + rel_idx
-        if 0 <= idx < len(self.items) and rel_idx < self._visible_count:
+        idx = self._index_at(sx, sy)
+        if idx is not None:
             self.active = False
             return self.items[idx][1]
-        self.active = False
         return None
 
     def update_hover(self, sx, sy):
@@ -199,12 +228,8 @@ class ContextMenu:
                 self.menu_y <= sy <= self.menu_y + h):
             self.hover_index = -1
             return
-        rel_idx = (sy - self.menu_y - self.pad) // self.item_h
-        idx = self.scroll_offset + rel_idx
-        if 0 <= idx < len(self.items) and rel_idx < self._visible_count:
-            self.hover_index = idx
-        else:
-            self.hover_index = -1
+        idx = self._index_at(sx, sy)
+        self.hover_index = idx if idx is not None else -1
 
     def _draw_rounded_rect(self, surf, color, rect, radius):
         x, y, w, h = rect
@@ -222,66 +247,68 @@ class ContextMenu:
         h = self._menu_h
         dx = self.menu_x - win_l
         dy = self.menu_y - win_t
-        radius = 8
+        radius = 13
 
+        shadow = pygame.Surface((w + 8, h + 8), pygame.SRCALPHA)
+        pygame.draw.rect(shadow, (0, 0, 0, 75), (4, 4, w, h), border_radius=radius)
+        surf.blit(shadow, (dx - 4, dy - 3))
         bg_surface = pygame.Surface((w, h), pygame.SRCALPHA)
-        self._draw_rounded_rect(bg_surface, (30, 30, 35, 240), (0, 0, w, h), radius)
-        pygame.draw.rect(bg_surface, (60, 60, 70, 200), (0, 0, w, h), 1, radius)
+        pygame.draw.rect(bg_surface, (25, 27, 35, 246), bg_surface.get_rect(), border_radius=radius)
+        pygame.draw.rect(bg_surface, (88, 95, 119, 170), bg_surface.get_rect(), 1, border_radius=radius)
         surf.blit(bg_surface, (dx, dy))
 
         if self.font is None:
-            self.font = pygame.font.SysFont('simsun', 14)
+            fonts = ('Microsoft YaHei UI', 'Microsoft YaHei', 'simsun')
+            self.font = pygame.font.SysFont(fonts, 14, bold=True)
+            self.hint_font = pygame.font.SysFont(fonts, 10)
+            self.title_font = pygame.font.SysFont(fonts, 12, bold=True)
+
+        title = self.title_font.render('桌宠菜单', True, (245, 247, 255))
+        surf.blit(title, (dx + self.pad + 5, dy + 10))
+        key_hint = self.hint_font.render('↑↓ 选择 · Enter 确认', True, (125, 135, 165))
+        surf.blit(key_hint, (dx + w - key_hint.get_width() - 12, dy + 12))
+        pygame.draw.line(surf, (66, 71, 88),
+                         (dx + 10, dy + self.header_h),
+                         (dx + w - 10, dy + self.header_h))
 
         total = len(self.items)
         for i_rel in range(self._visible_count):
             i_abs = self.scroll_offset + i_rel
             if i_abs >= total:
                 break
-            label, _ = self.items[i_abs]
-            iy = dy + self.pad + i_rel * self.item_h
+            label, action, hint = self.items[i_abs]
+            iy = dy + self.pad + self.header_h + i_rel * self.item_h
             ix = dx + self.pad
 
-            if i_abs == self.hover_index:
-                item_bg = pygame.Surface((self.item_w, self.item_h - 2), pygame.SRCALPHA)
-                self._draw_rounded_rect(item_bg, (60, 120, 200, 150), (0, 0, self.item_w, self.item_h - 2), 4)
-                surf.blit(item_bg, (ix, iy))
+            focus_index = (self.hover_index
+                           if isinstance(self.hover_index, int) and self.hover_index >= 0
+                           else self.selected_index)
+            if i_abs == focus_index:
+                item_bg_color = (77, 105, 210, 175) if action != 'quit' else (176, 65, 81, 150)
+                pygame.draw.rect(surf, item_bg_color,
+                                 (ix, iy + 2, self.item_w, self.item_h - 4),
+                                 border_radius=8)
                 text_color = (255, 255, 255)
-            elif i_abs == total - 1 and 'Quit' in label:
-                item_bg = pygame.Surface((self.item_w, self.item_h - 2), pygame.SRCALPHA)
-                self._draw_rounded_rect(item_bg, (200, 60, 80, 100), (0, 0, self.item_w, self.item_h - 2), 4)
-                surf.blit(item_bg, (ix, iy))
+            elif action == 'quit':
                 text_color = (240, 200, 200)
             else:
-                text_color = (230, 230, 230)
+                text_color = (231, 234, 244)
 
             txt = self.font.render(label, True, text_color)
-            surf.blit(txt, (ix + 6, iy + 6))
+            surf.blit(txt, (ix + 13, iy + 5))
+            hint_txt = self.hint_font.render(hint, True, (143, 151, 176))
+            surf.blit(hint_txt, (ix + 13, iy + 25))
 
         if total > self.max_visible:
-            sb_x = dx + w - self.scrollbar_w - 4
-            sb_y = dy + 4
-            sb_h = h - 8
-            # 背景槽
-            pygame.draw.rect(surf, (50, 50, 55), (sb_x, sb_y, self.scrollbar_w, sb_h), 0, 2)
-            # ▲ 上滚按钮
-            btn_h = 12
-            self._scroll_btn_up = (self.menu_x + sb_x - dx, self.menu_y + sb_y - dy, self.scrollbar_w, btn_h)
-            pygame.draw.rect(surf, (80, 80, 90), self._scroll_btn_up, 0, 2)
-            up_font = pygame.font.SysFont('simsun', 10)
-            up_txt = up_font.render('▲', True, (200, 200, 200))
-            surf.blit(up_txt, (sb_x + 2, sb_y + 1))
-            # ▼ 下滚按钮
-            self._scroll_btn_down = (self.menu_x + sb_x - dx, self.menu_y + sb_y + sb_h - btn_h - dy, self.scrollbar_w, btn_h)
-            pygame.draw.rect(surf, (80, 80, 90), self._scroll_btn_down, 0, 2)
-            dn_txt = up_font.render('▼', True, (200, 200, 200))
-            surf.blit(dn_txt, (sb_x + 2, sb_y + sb_h - btn_h + 1))
-            # 滑块
-            thumb_track_h = sb_h - btn_h * 2
-            thumb_h = max(12, thumb_track_h * self.max_visible // total)
-            thumb_y = sb_y + btn_h + (thumb_track_h - thumb_h) * self.scroll_offset // (total - self.max_visible)
-            thumb_surface = pygame.Surface((self.scrollbar_w, thumb_h), pygame.SRCALPHA)
-            self._draw_rounded_rect(thumb_surface, (100, 100, 110), (0, 0, self.scrollbar_w, thumb_h), 2)
-            surf.blit(thumb_surface, (sb_x, thumb_y))
+            sb_x = dx + w - self.scrollbar_w - 5
+            sb_y = dy + self.pad + self.header_h + 4
+            sb_h = self._visible_count * self.item_h - 8
+            pygame.draw.rect(surf, (49, 53, 66),
+                             (sb_x, sb_y, self.scrollbar_w, sb_h), border_radius=4)
+            thumb_h = max(24, sb_h * self._visible_count // total)
+            thumb_y = sb_y + (sb_h - thumb_h) * self.scroll_offset // (total - self._visible_count)
+            pygame.draw.rect(surf, (105, 117, 153),
+                             (sb_x, thumb_y, self.scrollbar_w, thumb_h), border_radius=4)
 
 
 # ════════════════════════════════════════════
@@ -494,6 +521,25 @@ def _do_set_interval(pet):
         pet.add_particles((100, 200, 255), 6)
 
 
+def _handle_menu_action(action, pet, word_list):
+    """统一处理鼠标和键盘触发的菜单动作；返回是否继续运行。"""
+    if action == 'feed':
+        pet.on_feed()
+    elif action == 'pet':
+        pet.on_pet()
+    elif action == 'import_words':
+        _do_import_words(pet, word_list)
+    elif action == 'set_interval':
+        _do_set_interval(pet)
+    elif action == 'switch_book':
+        _do_switch_book(word_list, pet)
+    elif action == 'delete_book':
+        _do_delete_book(word_list, pet)
+    elif action == 'quit':
+        return False
+    return True
+
+
 def main():
     # ——— 单实例锁：已有实例运行则退出 ———
     _kernel32 = ctypes.windll.kernel32
@@ -565,8 +611,24 @@ def main():
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 running = False
-            elif ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
-                running = False
+            elif ev.type == pygame.KEYDOWN:
+                if menu.active:
+                    if ev.key == pygame.K_ESCAPE:
+                        menu.hide()
+                    elif ev.key == pygame.K_UP:
+                        menu.move_selection(-1)
+                    elif ev.key == pygame.K_DOWN:
+                        menu.move_selection(1)
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        running = _handle_menu_action(
+                            menu.activate_selected(), pet, word_list)
+                    continue
+                if pet.word_bubble_active and ev.key in (pygame.K_SPACE, pygame.K_RETURN):
+                    pet.word_bubble_active = False
+                    word_list.advance()
+                    pet.word_timer = 0.0
+                elif ev.key == pygame.K_ESCAPE:
+                    running = False
 
             elif ev.type == pygame.MOUSEWHEEL:
                 if menu.active:
@@ -591,35 +653,19 @@ def main():
                             menu.scroll(-1)
                             continue
                     action = menu.hit_test(cx, cy)
-                    if action == 'feed':
-                        pet.on_feed()
-                    elif action == 'pet':
-                        pet.on_pet()
-                    elif action == 'quit':
-                        running = False
-                    elif action == 'import_words':
-                        menu.active = False
-                        _do_import_words(pet, word_list)
-                    elif action == 'set_interval':
-                        menu.active = False
-                        _do_set_interval(pet)
-                    elif action == 'switch_book':
-                        menu.active = False
-                        _do_switch_book(word_list, pet)
-                    elif action == 'delete_book':
-                        menu.active = False
-                        _do_delete_book(word_list, pet)
+                    if action:
+                        running = _handle_menu_action(action, pet, word_list)
                     continue
 
                 if ev.button == 1:
                     # 单词气泡激活时：点击气泡区域即可关闭
                     if pet.word_bubble_active and word_list.has_words():
-                        # 气泡大致在宠物上方 30~230px 范围内
-                        bubble_cx = pet.x
-                        bubble_cy_top = pet.y - 230
-                        bubble_cy_bot = pet.y - 30
-                        if (abs(cx - bubble_cx) < 150 and
-                            bubble_cy_top <= cy <= bubble_cy_bot):
+                        progress = f'{word_list.index + 1}/{len(word_list.words)}'
+                        bubble_rect = character.get_word_bubble_rect(
+                            word_list.get_current(), progress)
+                        win_l = pet.x - PET_CENTER_X
+                        win_t = pet.y - PET_CENTER_Y
+                        if bubble_rect.collidepoint(cx - win_l, cy - win_t):
                             pet.word_bubble_active = False
                             word_list.advance()
                             pet.word_timer = 0.0
@@ -668,7 +714,8 @@ def main():
         character.draw_feedback(screen, pet)
 
         if pet.word_bubble_active:
-            character.draw_word_bubble(screen, word_list.get_current())
+            progress = f'{word_list.index + 1}/{len(word_list.words)}'
+            character.draw_word_bubble(screen, word_list.get_current(), progress)
 
         if menu.active:
             menu.draw(screen, pet.x - PET_CENTER_X, pet.y - PET_CENTER_Y)

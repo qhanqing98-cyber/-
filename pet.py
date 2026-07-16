@@ -38,10 +38,12 @@ class Pet:
         self.word_timer = 0.0
         self.word_bubble_active = False
 
-        self.min_x = WINDOW_WIDTH // 2
-        self.max_x = SCREEN_WIDTH - WINDOW_WIDTH // 2
-        self.min_y_scrn = 0
-        self.max_y_scrn = SCREEN_HEIGHT - WINDOW_HEIGHT // 2
+        # x/y 表示宠物中心的屏幕坐标，边界按透明窗口内的绘制中心计算。
+        # 这样拖拽后整个窗口仍留在屏幕内，不会因为存档位置而“找不到宠物”。
+        self.min_x = PET_CENTER_X
+        self.max_x = SCREEN_WIDTH - (WINDOW_WIDTH - PET_CENTER_X)
+        self.min_y_scrn = PET_CENTER_Y
+        self.max_y_scrn = SCREEN_HEIGHT - (WINDOW_HEIGHT - PET_CENTER_Y)
 
         self.feedback_items = []
 
@@ -57,11 +59,14 @@ class Pet:
 
     def update(self, frozen=False, dt=1.0/60):
         """每帧调用，更新状态和位置。frozen=True 时冻结行为（菜单打开时用）"""
-        self._decay_states()
+        # 将原先按 60 FPS 调好的数值换算为真实时间，同时限制卡顿后的
+        # 单帧补偿，避免打开系统对话框后宠物突然冲出很远。
+        frame_scale = min(max(dt, 0.0) * FPS, 3.0)
+        self._decay_states(frame_scale)
         if not frozen:
-            self._evaluate_behavior()
-            self._execute_behavior()
-        self.frame += 1
+            self._evaluate_behavior(dt)
+            self._execute_behavior(frame_scale)
+        self.frame += frame_scale
 
         # 时间驱动动画帧（不受实际帧率波动影响）
         self.anim_timer += dt
@@ -73,20 +78,20 @@ class Pet:
         self._update_z_effect()
         self._update_feedback()
 
-    def _decay_states(self):
-        self.hunger = max(0, self.hunger - HUNGER_DECAY)
-        self.mood = max(0, self.mood - MOOD_DECAY)
+    def _decay_states(self, frame_scale=1.0):
+        self.hunger = max(0, self.hunger - HUNGER_DECAY * frame_scale)
+        self.mood = max(0, self.mood - MOOD_DECAY * frame_scale)
         if self.behavior == B_WALK:
-            self.energy = max(0, self.energy - ENERGY_WALK_DECAY)
+            self.energy = max(0, self.energy - ENERGY_WALK_DECAY * frame_scale)
         elif self.behavior == B_SLEEP:
-            self.energy = min(100, self.energy + ENERGY_SLEEP_GAIN)
+            self.energy = min(100, self.energy + ENERGY_SLEEP_GAIN * frame_scale)
         else:
-            self.energy = min(100, self.energy + ENERGY_IDLE_GAIN)
+            self.energy = min(100, self.energy + ENERGY_IDLE_GAIN * frame_scale)
 
-    def _evaluate_behavior(self):
+    def _evaluate_behavior(self, dt=1.0/60):
         """按固定间隔评估是否切换行为"""
-        self.eval_timer += 1
-        if self.eval_timer < BEHAVIOR_EVAL_INTERVAL:
+        self.eval_timer += max(dt, 0.0)
+        if self.eval_timer < BEHAVIOR_EVAL_INTERVAL / FPS:
             return
         self.eval_timer = 0
 
@@ -102,7 +107,9 @@ class Pet:
             self.frame = 0
             self.anim_frame = 0
             self.anim_timer = 0.0
-            self.animation_finished = False
+            # idle/walk/sleep/sad 都是循环行为，必须继续参与下一轮评估。
+            # 只有点击触发的 happy/surprised 属于一次性动画。
+            self.animation_finished = True
 
         # 行走时随机换方向
         if self.behavior == B_WALK and random.random() < 0.15:
@@ -120,24 +127,25 @@ class Pet:
             return B_IDLE
         return B_WALK
 
-    def _execute_behavior(self):
+    def _execute_behavior(self, frame_scale=1.0):
         """执行当前行为的物理逻辑"""
         if self.behavior == B_WALK:
-            self.x += WALK_SPEED * self.direction
+            self.x += WALK_SPEED * self.direction * frame_scale
             self._clamp_position()
 
         elif self.behavior == B_HAPPY:
-            self.happy_timer -= 1
+            self.happy_timer -= frame_scale
             if self.happy_timer <= 0:
                 self._finish_animation()
 
         elif self.behavior == B_SURPRISED:
-            self.surprised_timer -= 1
+            self.surprised_timer -= frame_scale
             if self.surprised_timer <= 0:
                 self._finish_animation()
 
     def _clamp_position(self):
         self.x = max(self.min_x, min(self.max_x, self.x))
+        self.y = max(self.min_y_scrn, min(self.max_y_scrn, self.y))
         # 到边界转向
         if self.x <= self.min_x:
             self.direction = 1
@@ -219,7 +227,7 @@ class Pet:
         """喂食"""
         self.hunger = min(100, self.hunger + FEED_HUNGER_BOOST)
         self.mood = min(100, self.mood + 3)
-        self.add_feedback('\u1F34E', (255, 160, 80), 3)
+        self.add_feedback('\U0001F34E', (255, 160, 80), 3)
         self.add_particles((255, 200, 100), 6)
 
     def on_pet(self):

@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+.playwright-mcp/
+.reasonix/
+.idea/
+.vscode/
+*.tmp

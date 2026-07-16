@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('gifs', 'gifs'), ('words_3 四级-乱序.json', '.'), ('words_4 六级-乱序.json', '.'), ('words_5 考研-乱序.json', '.'), ('words_index.json', '.')],
+    datas=[('gifs', 'gifs'), ('words_3 四级-乱序 .json', '.'), ('words_4 六级-乱序.json', '.'), ('words_5 考研-乱序.json', '.'), ('words_index.json', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

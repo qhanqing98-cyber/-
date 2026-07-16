@@ -11,6 +11,25 @@ INDEX_FILE = os.path.join(_DIR, 'words_index.json')
 OLD_FILE = os.path.join(_DIR, 'words.json')
 
 
+def _write_json_atomic(path, data):
+    """先写临时文件再替换，避免异常退出留下半截 JSON。"""
+    temp_path = f'{path}.tmp'
+    try:
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, path)
+        return True
+    except Exception:
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except OSError:
+            pass
+        raise
+
+
 def _book_path(name):
     """返回单词本文件的路径"""
     return os.path.join(_DIR, f'words_{name}.json')
@@ -163,8 +182,7 @@ class WordList:
         """写入单个单词本文件。返回成功与否。"""
         path = _book_path(name)
         try:
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            _write_json_atomic(path, data)
             return True
         except Exception as e:
             print(f"[words] 保存单词本「{name}」失败: {e}")
@@ -182,9 +200,10 @@ class WordList:
     def _write_index(self, active, book_names):
         """写入 index 文件。返回成功与否。"""
         try:
-            with open(INDEX_FILE, 'w', encoding='utf-8') as f:
-                json.dump({'active_book': active, 'books': book_names},
-                          f, ensure_ascii=False, indent=2)
+            _write_json_atomic(
+                INDEX_FILE,
+                {'active_book': active, 'books': sorted(book_names)},
+            )
             return True
         except Exception as e:
             print(f"[words] 保存索引文件失败: {e}")
@@ -276,16 +295,12 @@ class WordList:
 
     def delete_book(self, name):
         """删除指定单词本（含文件）。返回 (success, message)"""
-        # 如果不在内存中，尝试从文件加载
-        if name not in self.books:
-            path = _book_path(name)
-            if os.path.exists(path):
-                self._load_book(name)
-            else:
-                return False, f"单词本「{name}」不存在"
-
-        if len(self.books) <= 1:
+        known_books = self.list_books()
+        if name not in known_books:
+            return False, f"单词本「{name}」不存在"
+        if len(known_books) <= 1:
             return False, "至少保留一个单词本"
+
         # 删除文件
         path = _book_path(name)
         if os.path.exists(path):
@@ -293,10 +308,10 @@ class WordList:
                 os.remove(path)
             except Exception as e:
                 return False, f"删除文件失败: {e}"
-        del self.books[name]
+        self.books.pop(name, None)
         # 如果删的是当前激活的本，切到另一个
         if self.active_book == name:
-            new_active = next(iter(self.books.keys()))
+            new_active = next(book for book in known_books if book != name)
             self._load_book(new_active)
         self.save()
         return True, f"已删除「{name}」"
@@ -309,7 +324,8 @@ class WordList:
             return False, "文件不存在"
 
         try:
-            with open(path, 'r', encoding='utf-8') as f:
+            # utf-8-sig 同时兼容普通 UTF-8 和 Excel 常见的 BOM 文件。
+            with open(path, 'r', encoding='utf-8-sig') as f:
                 content = f.read()
         except Exception as e:
             return False, f"读取文件失败: {e}"

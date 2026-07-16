@@ -10,6 +10,19 @@ from config import *
 _sprite_cache = {}
 _flipped_cache = {}
 _use_sprites = False
+_font_cache = {}
+
+
+def _font(size, bold=False):
+    """统一 UI 字体并缓存，避免每帧反复创建字体对象。"""
+    key = (size, bold)
+    if key not in _font_cache:
+        _font_cache[key] = pygame.font.SysFont(
+            ('Microsoft YaHei UI', 'Microsoft YaHei', 'simsun'),
+            size,
+            bold=bold,
+        )
+    return _font_cache[key]
 
 
 # ════════════════════════════════════════════
@@ -178,7 +191,7 @@ def draw_feedback(surface, pet):
     """绘制互动反馈（粒子和浮动文字）"""
     if not pet.feedback_items:
         return
-    font = pygame.font.SysFont('simsun', 16, bold=True)
+    font = _font(16, bold=True)
     for item in pet.feedback_items:
         alpha = int(item['alpha'] * 255)
         if item['type'] == 'text':
@@ -228,85 +241,51 @@ def _draw_rounded_bar(self, surf, color, x, y, w, h, radius, progress):
 
 
 def draw_status(surface, pet):
-    if not pet.is_hovered:
+    if not pet.is_hovered or pet.word_bubble_active:
         return
 
-    font = pygame.font.SysFont('simsun', 12)
+    font = _font(12)
     lines = [
-        ('\u9971\u9913', pet.hunger, (255, 160, 80)),
-        ('\u5fc3\u60c5', pet.mood, (255, 120, 160)),
-        ('\u7cbe\u529b', pet.energy, (120, 200, 255)),
+        ('饱食', pet.hunger, (255, 170, 92)),
+        ('心情', pet.mood, (255, 112, 153)),
+        ('精力', pet.energy, (94, 185, 255)),
     ]
+    behavior_names = {
+        B_IDLE: '休息中', B_WALK: '散步中', B_SLEEP: '睡觉中',
+        B_HAPPY: '很开心', B_SAD: '需要陪伴', B_SURPRISED: '吓一跳',
+    }
 
-    panel_w = 120
-    bar_w = 60
-    line_h = 20
-    pad = 8
-    panel_h = len(lines) * line_h + pad * 2
-    radius = 8
+    panel_w, panel_h = 172, 116
+    pad, radius = 12, 12
+    px = min(WINDOW_WIDTH - panel_w - 8, PET_CENTER_X + 42)
+    py = PET_CENTER_Y - panel_h - 54
 
-    px = PET_CENTER_X + 25
-    py = PET_CENTER_Y - 40 - panel_h
+    shadow = pygame.Surface((panel_w + 8, panel_h + 8), pygame.SRCALPHA)
+    pygame.draw.rect(shadow, (0, 0, 0, 70), (4, 4, panel_w, panel_h), border_radius=radius)
+    surface.blit(shadow, (px - 4, py - 3))
 
     bg = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
-    pygame.draw.rect(bg, (30, 30, 35, 220), (0, 0, panel_w, panel_h), 0, radius)
-    pygame.draw.rect(bg, (60, 60, 70, 150), (0, 0, panel_w, panel_h), 1, radius)
-
-    shadow = pygame.Surface((panel_w + 4, panel_h + 4), pygame.SRCALPHA)
-    pygame.draw.rect(shadow, (0, 0, 0, 60), (2, 2, panel_w, panel_h), 0, radius)
-    surface.blit(shadow, (px - 1, py - 1))
-
+    pygame.draw.rect(bg, (27, 29, 38, 238), bg.get_rect(), border_radius=radius)
+    pygame.draw.rect(bg, (91, 98, 122, 150), bg.get_rect(), 1, border_radius=radius)
+    title = _font(13, bold=True).render(
+        behavior_names.get(pet.behavior, '陪伴中'), True, (245, 247, 255)
+    )
+    bg.blit(title, (pad, 9))
+    pygame.draw.circle(bg, (104, 226, 163), (panel_w - 17, 16), 4)
     surface.blit(bg, (px, py))
 
     for i, (label, val, color) in enumerate(lines):
-        ly = py + pad + i * line_h
-
-        icon_font = pygame.font.SysFont('simsun', 14)
-        if label == '\u9971\u9913':
-            icon = icon_font.render('\u1F35C', True, color)
-        elif label == '\u5fc3\u60c5':
-            icon = icon_font.render('\u2764\uFE0F', True, color)
-        else:
-            icon = icon_font.render('\u26A1', True, color)
-        surface.blit(icon, (px + 6, ly - 1))
-
+        ly = py + 36 + i * 24
         txt = font.render(label, True, (230, 230, 230))
-        surface.blit(txt, (px + 24, ly + 1))
+        surface.blit(txt, (px + pad, ly))
+        value_txt = _font(11, bold=True).render(f'{val:.0f}', True, color)
+        surface.blit(value_txt, (px + panel_w - pad - value_txt.get_width(), ly + 1))
 
-        bar_x = px + 55
-        bar_h = 8
-        bar_y = ly + 4
-
-        bar_bg = pygame.Surface((bar_w, bar_h), pygame.SRCALPHA)
-        pygame.draw.rect(bar_bg, (50, 50, 55, 180), (0, 0, bar_w, bar_h), 0, 4)
-        surface.blit(bar_bg, (bar_x, bar_y))
-
-        fill_w = int(bar_w * val / 100)
+        bar_x, bar_y, bar_w, bar_h = px + 50, ly + 5, 88, 7
+        pygame.draw.rect(surface, (55, 59, 72), (bar_x, bar_y, bar_w, bar_h), border_radius=4)
+        fill_w = max(0, min(bar_w, int(bar_w * val / 100)))
         if fill_w > 0:
-            fill_surface = pygame.Surface((fill_w, bar_h), pygame.SRCALPHA)
-
-            if val < 30:
-                gradient_start = (255, 80, 80)
-                gradient_end = (255, 120, 120)
-            elif val < 60:
-                gradient_start = (255, 200, 80)
-                gradient_end = (255, 160, 60)
-            else:
-                gradient_start = (100, 220, 100)
-                gradient_end = (80, 180, 80)
-
-            for j in range(fill_w):
-                t = j / fill_w
-                r = int(gradient_start[0] * (1 - t) + gradient_end[0] * t)
-                g = int(gradient_start[1] * (1 - t) + gradient_end[1] * t)
-                b = int(gradient_start[2] * (1 - t) + gradient_end[2] * t)
-                for k in range(bar_h):
-                    fill_surface.set_at((j, k), (r, g, b, 200))
-
-            pygame.draw.rect(fill_surface, (255, 255, 255, 40), (0, 0, fill_w, bar_h // 2), 0, 4)
-
-            pygame.draw.rect(fill_surface, gradient_start, (0, 0, fill_w, bar_h), 0, 4)
-            surface.blit(fill_surface, (bar_x, bar_y))
+            pygame.draw.rect(surface, color, (bar_x, bar_y, fill_w, bar_h), border_radius=4)
 
 
 # ════════════════════════════════════════════
@@ -320,6 +299,8 @@ _WORD_MEANING_FONT_SIZE = 16
 _BUBBLE_PAD = 14
 _BUBBLE_RADIUS = 10
 _BUBBLE_LINE_GAP = 8
+_BUBBLE_MAX_TEXT_W = 300
+_BUBBLE_TAIL_H = 9
 
 
 def _draw_rounded_rect_static(surf, color, rect, radius):
@@ -333,44 +314,82 @@ def _draw_rounded_rect_static(surf, color, rect, radius):
     pygame.draw.circle(surf, color, (x + w - radius, y + h - radius), radius)
 
 
-def draw_word_bubble(surface, word_data):
-    """在宠物上方绘制单词气泡"""
-    if word_data is None:
-        return
+def _wrap_text(font, text, max_width):
+    """按实际像素宽度换行，兼容中英文混排。"""
+    if not text:
+        return []
+    lines, current = [], ''
+    for char in text:
+        candidate = current + char
+        if current and font.size(candidate)[0] > max_width:
+            lines.append(current.rstrip())
+            current = char.lstrip()
+        else:
+            current = candidate
+    if current:
+        lines.append(current.rstrip())
+    return lines[:3]
 
+
+def _word_bubble_layout(word_data, progress_text=''):
+    """返回气泡布局，绘制与点击检测共用同一份几何信息。"""
     word = word_data['word']
     meaning = word_data.get('meaning', '')
-
-    word_font = pygame.font.SysFont('simsun', _WORD_FONT_SIZE, bold=True)
-    meaning_font = pygame.font.SysFont('simsun', _WORD_MEANING_FONT_SIZE)
+    word_size = _WORD_FONT_SIZE
+    word_font = _font(word_size, bold=True)
+    while word_size > 18 and word_font.size(word)[0] > _BUBBLE_MAX_TEXT_W:
+        word_size -= 1
+        word_font = _font(word_size, bold=True)
+    meaning_font = _font(_WORD_MEANING_FONT_SIZE)
+    hint_font = _font(11)
 
     word_surf = word_font.render(word, True, (255, 255, 255))
-    meaning_surf = meaning_font.render(meaning, True, (200, 200, 230)) if meaning else None
+    meaning_lines = _wrap_text(meaning_font, meaning, _BUBBLE_MAX_TEXT_W)
+    meaning_surfs = [meaning_font.render(line, True, (198, 203, 225)) for line in meaning_lines]
+    hint = f'点击或按空格继续  {progress_text}'.rstrip()
+    hint_surf = hint_font.render(hint, True, (133, 145, 178))
 
-    pw = _BUBBLE_PAD
-    w = word_surf.get_width() + pw * 2
-    h = word_surf.get_height() + pw * 2
-    if meaning_surf:
-        w = max(w, meaning_surf.get_width() + pw * 2)
-        h += meaning_surf.get_height() + _BUBBLE_LINE_GAP
-
-    # 最小宽度
-    w = max(w, 80)
-
-    # 气泡位置：宠物正上方
+    widths = [word_surf.get_width(), hint_surf.get_width()]
+    widths.extend(s.get_width() for s in meaning_surfs)
+    w = min(WINDOW_WIDTH - 24, max(180, max(widths) + _BUBBLE_PAD * 2))
+    content_h = _BUBBLE_PAD + word_surf.get_height()
+    if meaning_surfs:
+        content_h += _BUBBLE_LINE_GAP + sum(s.get_height() for s in meaning_surfs)
+        content_h += max(0, len(meaning_surfs) - 1) * 3
+    content_h += 10 + hint_surf.get_height() + _BUBBLE_PAD
     bx = PET_CENTER_X - w // 2
-    by = PET_CENTER_Y - 80 - h
+    by = PET_CENTER_Y - 72 - content_h - _BUBBLE_TAIL_H
+    rect = pygame.Rect(bx, by, w, content_h + _BUBBLE_TAIL_H)
+    return rect, word_surf, meaning_surfs, hint_surf
+
+
+def get_word_bubble_rect(word_data, progress_text=''):
+    """提供与视觉完全一致的点击区域。"""
+    if word_data is None:
+        return pygame.Rect(0, 0, 0, 0)
+    return _word_bubble_layout(word_data, progress_text)[0]
+
+
+def draw_word_bubble(surface, word_data, progress_text=''):
+    """在宠物上方绘制可点击的单词学习卡片。"""
+    if word_data is None:
+        return
+    rect, word_surf, meaning_surfs, hint_surf = _word_bubble_layout(word_data, progress_text)
+    bx, by, w, total_h = rect
+    h = total_h - _BUBBLE_TAIL_H
 
     # 背景
     radius = _BUBBLE_RADIUS
-    bg = pygame.Surface((w, h), pygame.SRCALPHA)
+    bg = pygame.Surface((w, total_h), pygame.SRCALPHA)
+    pygame.draw.rect(bg, (0, 0, 0, 55), (3, 4, w - 6, h), border_radius=radius)
     _draw_rounded_rect_static(bg, (*_WORD_BUBBLE_BG, 235), (0, 0, w, h), radius)
-    pygame.draw.rect(bg, (*_WORD_BUBBLE_BORDER, 180), (0, 0, w, h), 1, radius)
+    pygame.draw.rect(bg, (*_WORD_BUBBLE_BORDER, 190), (0, 0, w, h), 1, border_radius=radius)
+    pygame.draw.rect(bg, (99, 130, 255, 220), (0, 0, 4, h), border_radius=2)
 
     # 小三角（指向宠物）
     tri_cx = w // 2
-    tri_y = h
-    tri_size = 8
+    tri_y = h - 1
+    tri_size = _BUBBLE_TAIL_H
     pygame.draw.polygon(bg, (*_WORD_BUBBLE_BG, 235),
                         [(tri_cx - tri_size, tri_y),
                          (tri_cx + tri_size, tri_y),
@@ -380,10 +399,18 @@ def draw_word_bubble(surface, word_data):
 
     # 单词文字
     word_x = bx + (w - word_surf.get_width()) // 2
-    surface.blit(word_surf, (word_x, by + pw))
+    text_y = by + _BUBBLE_PAD
+    surface.blit(word_surf, (word_x, text_y))
 
     # 释义文字
-    if meaning_surf:
+    text_y += word_surf.get_height() + _BUBBLE_LINE_GAP
+    for meaning_surf in meaning_surfs:
         meaning_x = bx + (w - meaning_surf.get_width()) // 2
-        meaning_y = by + pw + word_surf.get_height() + _BUBBLE_LINE_GAP
-        surface.blit(meaning_surf, (meaning_x, meaning_y))
+        surface.blit(meaning_surf, (meaning_x, text_y))
+        text_y += meaning_surf.get_height() + 3
+
+    hint_y = by + h - _BUBBLE_PAD - hint_surf.get_height()
+    pygame.draw.line(surface, (71, 76, 94),
+                     (bx + _BUBBLE_PAD, hint_y - 6),
+                     (bx + w - _BUBBLE_PAD, hint_y - 6))
+    surface.blit(hint_surf, (bx + (w - hint_surf.get_width()) // 2, hint_y))

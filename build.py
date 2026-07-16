@@ -1,7 +1,9 @@
 # build.py — 打包桌宠为单文件 exe
 import os
-import glob
 import PyInstaller.__main__
+
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+os.chdir(PROJECT_DIR)
 
 # 自动扫描词库文件（支持中文文件名）
 word_files = []
