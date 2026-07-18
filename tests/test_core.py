@@ -75,6 +75,18 @@ class ContextMenuTests(unittest.TestCase):
         menu.update_hover(menu.menu_x + 10, menu.menu_y + 10)
         self.assertEqual(menu.hover_index, -1)
 
+    def test_grid_hit_testing_and_keyboard_navigation(self):
+        menu = ContextMenu()
+        menu.show(100, 100, 0, 0)
+        target = menu._item_rect(3, screen_coords=True)
+        self.assertEqual(menu.hit_test(*target.center), 'import_words')
+
+        menu.show(100, 100, 0, 0)
+        menu.move_grid(dy=1)
+        self.assertEqual(menu.selected_index, 2)
+        menu.move_grid(dx=1)
+        self.assertEqual(menu.selected_index, 3)
+
 
 if __name__ == '__main__':
     unittest.main()

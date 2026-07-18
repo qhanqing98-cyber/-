@@ -81,19 +81,21 @@ class ContextMenu:
         self.active = False
         self.menu_x = 0
         self.menu_y = 0
-        self.item_h = 43
-        self.item_w = 208
+        self.item_h = 46
+        self.item_w = 126
+        self.item_gap = 6
+        self.quit_h = 34
         self.header_h = 38
         self.pad = 8
-        self.scrollbar_w = 8
-        self.max_visible = 5
+        self.scrollbar_w = 0
+        self.max_visible = 7
         self.scroll_offset = 0
         self.selected_index = 0
         self.items = [
             ('喂食', 'feed', '恢复饱食度'),
             ('摸摸它', 'pet', '提升心情'),
             ('选择单词本', 'switch_book', '切换学习内容'),
-            ('导入单词表', 'import_words', '支持 TXT / CSV / JSON'),
+            ('导入单词表', 'import_words', 'TXT / CSV / JSON'),
             ('设置单词间隔', 'set_interval', '调整提醒频率'),
             ('删除单词本', 'delete_book', '管理本地词库'),
             ('退出桌宠', 'quit', '保存并退出'),
@@ -107,21 +109,16 @@ class ContextMenu:
 
     @property
     def _visible_count(self):
-        """可用窗口高度内能完整显示的项数"""
-        # 先从总项数限制
-        n = min(len(self.items), self.max_visible)
-        # 再从窗口高度限制（菜单要能完全显示）
-        max_h = WINDOW_HEIGHT - self.pad * 2 - self.header_h
-        max_by_height = max(1, max_h // self.item_h)
-        return min(n, max_by_height)
+        return len(self.items)
 
     @property
     def _menu_w(self):
-        return self.item_w + self.pad * 2 + self.scrollbar_w
+        return self.item_w * 2 + self.item_gap + self.pad * 2
 
     @property
     def _menu_h(self):
-        return self.header_h + self._visible_count * self.item_h + self.pad * 2
+        return (self.header_h + self.pad * 2 + self.item_h * 3 +
+                self.item_gap * 3 + self.quit_h)
 
     @property
     def _items_top(self):
@@ -168,25 +165,33 @@ class ContextMenu:
                 self.menu_y <= sy <= self.menu_y + self._menu_h)
 
     def scroll(self, delta):
-        """滚轮：delta>0 上滚，delta<0 下滚"""
-        total = len(self.items)
-        if total <= self.max_visible:
-            return
-        max_offset = total - self.max_visible
-        self.scroll_offset = max(0, min(self.scroll_offset - delta, max_offset))
-        # 同时让选中项保持在可见范围内
-        if self.selected_index < self.scroll_offset:
-            self.selected_index = self.scroll_offset
-        elif self.selected_index >= self.scroll_offset + self.max_visible:
-            self.selected_index = self.scroll_offset + self.max_visible - 1
+        """网格菜单无需滚动，保留接口兼容旧事件处理。"""
+        return
 
     def move_selection(self, delta):
-        """键盘上下选择，自动保持选中项可见。"""
+        """线性选择，用于滚轮或兼容操作。"""
         self.selected_index = (self.selected_index + delta) % len(self.items)
-        if self.selected_index < self.scroll_offset:
-            self.scroll_offset = self.selected_index
-        elif self.selected_index >= self.scroll_offset + self._visible_count:
-            self.scroll_offset = self.selected_index - self._visible_count + 1
+        self.hover_index = -1
+
+    def move_grid(self, dx=0, dy=0):
+        """按视觉网格移动键盘焦点。"""
+        idx = self.selected_index
+        if idx == 6:
+            if dy < 0:
+                idx = 4
+            elif dy > 0:
+                idx = 0
+        else:
+            row, col = divmod(idx, 2)
+            if dx:
+                col = 1 - col
+            if dy < 0:
+                idx = 6 if row == 0 else (row - 1) * 2 + col
+            elif dy > 0:
+                idx = 6 if row == 2 else (row + 1) * 2 + col
+            else:
+                idx = row * 2 + col
+        self.selected_index = idx
         self.hover_index = -1
 
     def activate_selected(self):
@@ -194,14 +199,29 @@ class ContextMenu:
         return self.items[self.selected_index][1]
 
     def _index_at(self, sx, sy):
-        rel_y = sy - self._items_top
-        if rel_y < 0:
-            return None
-        rel_idx = rel_y // self.item_h
-        idx = self.scroll_offset + rel_idx
-        if 0 <= idx < len(self.items) and rel_idx < self._visible_count:
-            return idx
+        for idx in range(len(self.items)):
+            if self._item_rect(idx, screen_coords=True).collidepoint(sx, sy):
+                return idx
         return None
+
+    def _item_rect(self, idx, screen_coords=False):
+        base_x = self.menu_x if screen_coords else 0
+        base_y = self.menu_y if screen_coords else 0
+        top = base_y + self.header_h + self.pad
+        if idx < 6:
+            row, col = divmod(idx, 2)
+            return pygame.Rect(
+                base_x + self.pad + col * (self.item_w + self.item_gap),
+                top + row * (self.item_h + self.item_gap),
+                self.item_w,
+                self.item_h,
+            )
+        return pygame.Rect(
+            base_x + self.pad,
+            top + 3 * (self.item_h + self.item_gap),
+            self.item_w * 2 + self.item_gap,
+            self.quit_h,
+        )
 
     def hit_test(self, sx, sy):
         if not self.active:
@@ -263,52 +283,53 @@ class ContextMenu:
             self.hint_font = pygame.font.SysFont(fonts, 10)
             self.title_font = pygame.font.SysFont(fonts, 12, bold=True)
 
-        title = self.title_font.render('桌宠菜单', True, (245, 247, 255))
+        title = self.title_font.render('和我互动', True, (245, 247, 255))
         surf.blit(title, (dx + self.pad + 5, dy + 10))
-        key_hint = self.hint_font.render('↑↓ 选择 · Enter 确认', True, (125, 135, 165))
+        key_hint = self.hint_font.render('方向键 · Enter', True, (125, 135, 165))
         surf.blit(key_hint, (dx + w - key_hint.get_width() - 12, dy + 12))
         pygame.draw.line(surf, (66, 71, 88),
                          (dx + 10, dy + self.header_h),
                          (dx + w - 10, dy + self.header_h))
 
-        total = len(self.items)
-        for i_rel in range(self._visible_count):
-            i_abs = self.scroll_offset + i_rel
-            if i_abs >= total:
-                break
-            label, action, hint = self.items[i_abs]
-            iy = dy + self.pad + self.header_h + i_rel * self.item_h
-            ix = dx + self.pad
+        focus_index = (self.hover_index
+                       if isinstance(self.hover_index, int) and self.hover_index >= 0
+                       else self.selected_index)
+        symbols = {
+            'feed': '+', 'pet': '~', 'switch_book': 'A',
+            'import_words': '^', 'set_interval': 'T',
+            'delete_book': '-', 'quit': 'x',
+        }
+        for idx, (label, action, hint) in enumerate(self.items):
+            rect = self._item_rect(idx).move(dx, dy)
+            focused = idx == focus_index
+            if action == 'quit':
+                pygame.draw.line(surf, (66, 71, 88),
+                                 (rect.left, rect.top - 3),
+                                 (rect.right, rect.top - 3))
+                if focused:
+                    pygame.draw.rect(surf, (127, 51, 66, 145), rect, border_radius=8)
+                quit_text = self.font.render(f"{symbols[action]}  保存并退出", True, (244, 164, 178))
+                surf.blit(quit_text, quit_text.get_rect(center=rect.center))
+                continue
 
-            focus_index = (self.hover_index
-                           if isinstance(self.hover_index, int) and self.hover_index >= 0
-                           else self.selected_index)
-            if i_abs == focus_index:
-                item_bg_color = (77, 105, 210, 175) if action != 'quit' else (176, 65, 81, 150)
-                pygame.draw.rect(surf, item_bg_color,
-                                 (ix, iy + 2, self.item_w, self.item_h - 4),
-                                 border_radius=8)
-                text_color = (255, 255, 255)
-            elif action == 'quit':
-                text_color = (240, 200, 200)
+            if focused:
+                pygame.draw.rect(surf, (78, 103, 211, 205), rect, border_radius=9)
+                label_color, hint_color, symbol_color = ((255, 255, 255),) * 3
             else:
-                text_color = (231, 234, 244)
+                pygame.draw.rect(surf, (38, 41, 52, 210), rect, border_radius=9)
+                pygame.draw.rect(surf, (65, 70, 87, 115), rect, 1, border_radius=9)
+                label_color = (239, 241, 248)
+                hint_color = (137, 145, 169)
+                symbol_color = (151, 162, 192)
+                if action == 'delete_book':
+                    label_color = (241, 166, 178)
 
-            txt = self.font.render(label, True, text_color)
-            surf.blit(txt, (ix + 13, iy + 5))
-            hint_txt = self.hint_font.render(hint, True, (143, 151, 176))
-            surf.blit(hint_txt, (ix + 13, iy + 25))
-
-        if total > self.max_visible:
-            sb_x = dx + w - self.scrollbar_w - 5
-            sb_y = dy + self.pad + self.header_h + 4
-            sb_h = self._visible_count * self.item_h - 8
-            pygame.draw.rect(surf, (49, 53, 66),
-                             (sb_x, sb_y, self.scrollbar_w, sb_h), border_radius=4)
-            thumb_h = max(24, sb_h * self._visible_count // total)
-            thumb_y = sb_y + (sb_h - thumb_h) * self.scroll_offset // (total - self._visible_count)
-            pygame.draw.rect(surf, (105, 117, 153),
-                             (sb_x, thumb_y, self.scrollbar_w, thumb_h), border_radius=4)
+            symbol = self.title_font.render(symbols[action], True, symbol_color)
+            surf.blit(symbol, (rect.x + 10, rect.y + 14))
+            txt = self.font.render(label, True, label_color)
+            surf.blit(txt, (rect.x + 31, rect.y + 6))
+            hint_txt = self.hint_font.render(hint, True, hint_color)
+            surf.blit(hint_txt, (rect.x + 31, rect.y + 26))
 
 
 # ════════════════════════════════════════════
@@ -616,9 +637,13 @@ def main():
                     if ev.key == pygame.K_ESCAPE:
                         menu.hide()
                     elif ev.key == pygame.K_UP:
-                        menu.move_selection(-1)
+                        menu.move_grid(dy=-1)
                     elif ev.key == pygame.K_DOWN:
-                        menu.move_selection(1)
+                        menu.move_grid(dy=1)
+                    elif ev.key == pygame.K_LEFT:
+                        menu.move_grid(dx=-1)
+                    elif ev.key == pygame.K_RIGHT:
+                        menu.move_grid(dx=1)
                     elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                         running = _handle_menu_action(
                             menu.activate_selected(), pet, word_list)

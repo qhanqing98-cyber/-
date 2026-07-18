@@ -271,7 +271,10 @@ def draw_status(surface, pet):
         behavior_names.get(pet.behavior, '陪伴中'), True, (245, 247, 255)
     )
     bg.blit(title, (pad, 9))
-    pygame.draw.circle(bg, (104, 226, 163), (panel_w - 17, 16), 4)
+    online = _font(10).render('在线', True, (142, 154, 181))
+    online_x = panel_w - pad - online.get_width()
+    pygame.draw.circle(bg, (104, 226, 163), (online_x - 8, 16), 3)
+    bg.blit(online, (online_x, 10))
     surface.blit(bg, (px, py))
 
     for i, (label, val, color) in enumerate(lines):
@@ -346,13 +349,14 @@ def _word_bubble_layout(word_data, progress_text=''):
     word_surf = word_font.render(word, True, (255, 255, 255))
     meaning_lines = _wrap_text(meaning_font, meaning, _BUBBLE_MAX_TEXT_W)
     meaning_surfs = [meaning_font.render(line, True, (198, 203, 225)) for line in meaning_lines]
-    hint = f'点击或按空格继续  {progress_text}'.rstrip()
+    hint = '点击卡片继续'
     hint_surf = hint_font.render(hint, True, (133, 145, 178))
 
-    widths = [word_surf.get_width(), hint_surf.get_width()]
+    progress_w = hint_font.size(progress_text)[0] + 22 if progress_text else 0
+    widths = [word_surf.get_width(), hint_surf.get_width(), progress_w + 70]
     widths.extend(s.get_width() for s in meaning_surfs)
     w = min(WINDOW_WIDTH - 24, max(180, max(widths) + _BUBBLE_PAD * 2))
-    content_h = _BUBBLE_PAD + word_surf.get_height()
+    content_h = _BUBBLE_PAD + 18 + 10 + word_surf.get_height()
     if meaning_surfs:
         content_h += _BUBBLE_LINE_GAP + sum(s.get_height() for s in meaning_surfs)
         content_h += max(0, len(meaning_surfs) - 1) * 3
@@ -384,7 +388,6 @@ def draw_word_bubble(surface, word_data, progress_text=''):
     pygame.draw.rect(bg, (0, 0, 0, 55), (3, 4, w - 6, h), border_radius=radius)
     _draw_rounded_rect_static(bg, (*_WORD_BUBBLE_BG, 235), (0, 0, w, h), radius)
     pygame.draw.rect(bg, (*_WORD_BUBBLE_BORDER, 190), (0, 0, w, h), 1, border_radius=radius)
-    pygame.draw.rect(bg, (99, 130, 255, 220), (0, 0, 4, h), border_radius=2)
 
     # 小三角（指向宠物）
     tri_cx = w // 2
@@ -397,15 +400,29 @@ def draw_word_bubble(surface, word_data, progress_text=''):
 
     surface.blit(bg, (bx, by))
 
+    # 顶部标签和学习进度
+    top_font = _font(11)
+    top_label = top_font.render('今日单词', True, (133, 145, 178))
+    surface.blit(top_label, (bx + _BUBBLE_PAD, by + _BUBBLE_PAD))
+    if progress_text:
+        progress_surf = top_font.render(progress_text, True, (210, 218, 255))
+        pill_w = progress_surf.get_width() + 16
+        pill_h = progress_surf.get_height() + 6
+        pill_x = bx + w - _BUBBLE_PAD - pill_w
+        pill_y = by + _BUBBLE_PAD - 3
+        pygame.draw.rect(surface, (64, 75, 118),
+                         (pill_x, pill_y, pill_w, pill_h), border_radius=8)
+        surface.blit(progress_surf, (pill_x + 8, pill_y + 3))
+
     # 单词文字
-    word_x = bx + (w - word_surf.get_width()) // 2
-    text_y = by + _BUBBLE_PAD
+    word_x = bx + _BUBBLE_PAD
+    text_y = by + _BUBBLE_PAD + 28
     surface.blit(word_surf, (word_x, text_y))
 
     # 释义文字
     text_y += word_surf.get_height() + _BUBBLE_LINE_GAP
     for meaning_surf in meaning_surfs:
-        meaning_x = bx + (w - meaning_surf.get_width()) // 2
+        meaning_x = bx + _BUBBLE_PAD
         surface.blit(meaning_surf, (meaning_x, text_y))
         text_y += meaning_surf.get_height() + 3
 
@@ -413,4 +430,12 @@ def draw_word_bubble(surface, word_data, progress_text=''):
     pygame.draw.line(surface, (71, 76, 94),
                      (bx + _BUBBLE_PAD, hint_y - 6),
                      (bx + w - _BUBBLE_PAD, hint_y - 6))
-    surface.blit(hint_surf, (bx + (w - hint_surf.get_width()) // 2, hint_y))
+    surface.blit(hint_surf, (bx + _BUBBLE_PAD, hint_y))
+    key_surf = _font(10, bold=True).render('SPACE', True, (174, 184, 215))
+    key_w, key_h = key_surf.get_width() + 12, key_surf.get_height() + 4
+    key_x = bx + w - _BUBBLE_PAD - key_w
+    pygame.draw.rect(surface, (55, 60, 76),
+                     (key_x, hint_y - 2, key_w, key_h), border_radius=5)
+    pygame.draw.rect(surface, (89, 96, 119),
+                     (key_x, hint_y - 2, key_w, key_h), 1, border_radius=5)
+    surface.blit(key_surf, (key_x + 6, hint_y))
