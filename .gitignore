@@ -7,4 +7,11 @@ dist/
 .reasonix/
 .idea/
 .vscode/
+.codex/
+.agents/
 *.tmp
+*.spec
+save.json
+words.json
+DeskPet.exe
+reasonix.toml
