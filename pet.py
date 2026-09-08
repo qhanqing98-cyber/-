@@ -27,6 +27,7 @@ class Pet:
         self.animation_finished = True
         self.eval_timer = 0
         self.is_hovered = False
+        self.panel_timer = 0.0  # 键盘交互后状态面板剩余显示秒数
         self.is_dragging = False
         self.drag_offset_x = 0
         self.drag_offset_y = 0
@@ -77,6 +78,12 @@ class Pet:
 
         self._update_z_effect()
         self._update_feedback()
+        # 状态面板计时（键盘交互触发，随时间淡出）
+        self.panel_timer = max(0.0, self.panel_timer - dt)
+
+    def show_panel(self, seconds=2.5):
+        """键盘交互后短暂显示状态面板（鼠标悬停外的另一种唤出方式）"""
+        self.panel_timer = max(self.panel_timer, seconds)
 
     def _decay_states(self, frame_scale=1.0):
         self.hunger = max(0, self.hunger - HUNGER_DECAY * frame_scale)
@@ -183,7 +190,7 @@ class Pet:
             self.feedback_items.append({
                 'text': text,
                 'color': color,
-                'x': (PET_CENTER_X - 30) + (PET_CENTER_X + 30) * (random.random() - 0.5),
+                'x': PET_CENTER_X + (random.random() - 0.5) * 60,
                 'y': PET_CENTER_Y - 30,
                 'vx': (random.random() - 0.5) * 2,
                 'vy': 1 + random.random() * 1.5,

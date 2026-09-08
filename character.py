@@ -48,10 +48,9 @@ def load_gifs(gif_dir='gifs'):
 
     try:
         from PIL import Image
+        import numpy as np
     except ImportError:
         return False
-
-    import numpy as np
 
     _sprite_cache.clear()
     _flipped_cache.clear()
@@ -209,39 +208,26 @@ def draw_feedback(surface, pet):
 # 悬停状态面板
 # ════════════════════════════════════════════
 
-def _draw_rounded_bar(self, surf, color, x, y, w, h, radius, progress):
-    bg = pygame.Surface((w, h), pygame.SRCALPHA)
-    pygame.draw.rect(bg, (50, 50, 55, 180), (0, 0, w, h), 0, radius)
-    surf.blit(bg, (x, y))
-
-    if progress <= 0:
-        return
-
-    fill_w = int(w * progress)
-    fill_surface = pygame.Surface((fill_w, h), pygame.SRCALPHA)
-
-    if progress < 0.3:
-        gradient_color = (255, 80, 80)
-    elif progress < 0.6:
-        gradient_color = (255, 200, 80)
-    else:
-        gradient_color = (100, 220, 100)
-
-    for i in range(fill_w):
-        alpha = 180 + 75 * (i / fill_w)
-        r, g, b = gradient_color
-        fill_surface.set_at((i, h // 2), (r, g, b, int(alpha)))
-
-    pygame.draw.rect(fill_surface, gradient_color, (0, 0, fill_w, h), 0, radius)
-    highlight = pygame.Surface((fill_w, h // 2), pygame.SRCALPHA)
-    pygame.draw.rect(highlight, (255, 255, 255, 30), (0, 0, fill_w, h // 2), 0, radius)
-    fill_surface.blit(highlight, (0, 0))
-
-    surf.blit(fill_surface, (x, y))
+def draw_kb_hint(surface):
+    """悬停但窗口无键盘焦点时的提示气泡。"""
+    txt = _font(11).render('点击桌宠启用键盘操作', True, (205, 213, 235))
+    pad = 9
+    w = txt.get_width() + pad * 2
+    h = 24
+    x = PET_CENTER_X - w // 2
+    y = PET_CENTER_Y - 140
+    pill = pygame.Surface((w, h), pygame.SRCALPHA)
+    pygame.draw.rect(pill, (24, 26, 34, 215), pill.get_rect(), border_radius=12)
+    pygame.draw.rect(pill, (88, 95, 119, 170), pill.get_rect(), 1, border_radius=12)
+    pill.blit(txt, (pad, (h - txt.get_height()) // 2))
+    surface.blit(pill, (x, y))
 
 
 def draw_status(surface, pet):
-    if not pet.is_hovered or pet.word_bubble_active:
+    if pet.word_bubble_active:
+        return
+    # 鼠标悬停或键盘交互（panel_timer 未到期）时显示
+    if not pet.is_hovered and getattr(pet, 'panel_timer', 0.0) <= 0:
         return
 
     font = _font(12)
@@ -255,7 +241,7 @@ def draw_status(surface, pet):
         B_HAPPY: '很开心', B_SAD: '需要陪伴', B_SURPRISED: '吓一跳',
     }
 
-    panel_w, panel_h = 172, 116
+    panel_w, panel_h = 172, 136
     pad, radius = 12, 12
     px = min(WINDOW_WIDTH - panel_w - 8, PET_CENTER_X + 42)
     py = PET_CENTER_Y - panel_h - 54
@@ -290,6 +276,13 @@ def draw_status(surface, pet):
         if fill_w > 0:
             pygame.draw.rect(surface, color, (bar_x, bar_y, fill_w, bar_h), border_radius=4)
 
+    # 底部键盘快捷键提示
+    pygame.draw.line(surface, (66, 71, 88),
+                     (px + pad, py + panel_h - 30),
+                     (px + panel_w - pad, py + panel_h - 30))
+    keys_hint = _font(10).render('F 喂食 · P 摸摸 · 方向键移动', True, (125, 135, 165))
+    surface.blit(keys_hint, (px + pad, py + panel_h - 22))
+
 
 # ════════════════════════════════════════════
 # 单词气泡
@@ -304,17 +297,6 @@ _BUBBLE_RADIUS = 10
 _BUBBLE_LINE_GAP = 8
 _BUBBLE_MAX_TEXT_W = 300
 _BUBBLE_TAIL_H = 9
-
-
-def _draw_rounded_rect_static(surf, color, rect, radius):
-    """绘制纯色圆角矩形（无边框）"""
-    x, y, w, h = rect
-    pygame.draw.rect(surf, color, (x + radius, y, w - radius * 2, h))
-    pygame.draw.rect(surf, color, (x, y + radius, w, h - radius * 2))
-    pygame.draw.circle(surf, color, (x + radius, y + radius), radius)
-    pygame.draw.circle(surf, color, (x + w - radius, y + radius), radius)
-    pygame.draw.circle(surf, color, (x + radius, y + h - radius), radius)
-    pygame.draw.circle(surf, color, (x + w - radius, y + h - radius), radius)
 
 
 def _wrap_text(font, text, max_width):
@@ -346,7 +328,7 @@ def _word_bubble_layout(word_data, progress_text=''):
     meaning_font = _font(_WORD_MEANING_FONT_SIZE)
     hint_font = _font(11)
 
-    word_surf = word_font.render(word, True, (255, 255, 255))
+    word_surf = word_font.render(word, True, (184, 212, 255))
     meaning_lines = _wrap_text(meaning_font, meaning, _BUBBLE_MAX_TEXT_W)
     meaning_surfs = [meaning_font.render(line, True, (198, 203, 225)) for line in meaning_lines]
     hint = '点击卡片继续'
@@ -386,7 +368,7 @@ def draw_word_bubble(surface, word_data, progress_text=''):
     radius = _BUBBLE_RADIUS
     bg = pygame.Surface((w, total_h), pygame.SRCALPHA)
     pygame.draw.rect(bg, (0, 0, 0, 55), (3, 4, w - 6, h), border_radius=radius)
-    _draw_rounded_rect_static(bg, (*_WORD_BUBBLE_BG, 235), (0, 0, w, h), radius)
+    pygame.draw.rect(bg, (*_WORD_BUBBLE_BG, 235), (0, 0, w, h), border_radius=radius)
     pygame.draw.rect(bg, (*_WORD_BUBBLE_BORDER, 190), (0, 0, w, h), 1, border_radius=radius)
 
     # 小三角（指向宠物）
@@ -427,9 +409,20 @@ def draw_word_bubble(surface, word_data, progress_text=''):
         text_y += meaning_surf.get_height() + 3
 
     hint_y = by + h - _BUBBLE_PAD - hint_surf.get_height()
-    pygame.draw.line(surface, (71, 76, 94),
-                     (bx + _BUBBLE_PAD, hint_y - 6),
-                     (bx + w - _BUBBLE_PAD, hint_y - 6))
+    # 分隔线兼学习进度条：底色轨道 + 高亮填充
+    track_y = hint_y - 6
+    tx0, tx1 = bx + _BUBBLE_PAD, bx + w - _BUBBLE_PAD
+    pygame.draw.line(surface, (55, 60, 76), (tx0, track_y), (tx1, track_y), 2)
+    if progress_text and '/' in progress_text:
+        try:
+            cur_s, total_s = progress_text.split('/', 1)
+            frac = max(0.0, min(1.0, int(cur_s) / max(1, int(total_s))))
+            if frac > 0:
+                pygame.draw.line(surface, (120, 145, 255),
+                                 (tx0, track_y),
+                                 (tx0 + int((tx1 - tx0) * frac), track_y), 2)
+        except ValueError:
+            pass  # 进度文本不是 "n/m" 格式时只画轨道
     surface.blit(hint_surf, (bx + _BUBBLE_PAD, hint_y))
     key_surf = _font(10, bold=True).render('SPACE', True, (174, 184, 215))
     key_w, key_h = key_surf.get_width() + 12, key_surf.get_height() + 4

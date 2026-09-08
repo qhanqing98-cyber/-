@@ -3,7 +3,6 @@ __pycache__/
 .venv/
 build/
 dist/
-.playwright-mcp/
 .reasonix/
 .idea/
 .vscode/
@@ -13,5 +12,8 @@ dist/
 *.spec
 save.json
 words.json
+words_index.json
+*.log
 DeskPet.exe
 reasonix.toml
+.workbuddy/

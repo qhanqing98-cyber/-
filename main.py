@@ -6,6 +6,7 @@ import ctypes
 from ctypes import wintypes
 import os
 import sys
+import traceback
 
 import pygame
 
@@ -13,6 +14,20 @@ from config import *
 from pet import Pet
 from words import WordList
 import character
+
+
+def _install_crash_logger():
+    """pythonw 启动时没有控制台，未捕获异常会静默退出；
+    挂上钩子把堆栈写进 crash.log 方便排查。"""
+    def _hook(exc_type, exc, tb):
+        try:
+            with open(os.path.join(get_data_path(), 'crash.log'),
+                      'a', encoding='utf-8') as f:
+                f.write('\n' + '-' * 60 + '\n')
+                f.write('\n'.join(traceback.format_exception(exc_type, exc, tb)))
+        except Exception:
+            pass
+    sys.excepthook = _hook
 
 # ─── Windows API 常量 ────────────────────────
 _GWL_EXSTYLE = -20
@@ -36,6 +51,16 @@ def _rgb(r, g, b):
 
 def _get_hwnd():
     return pygame.display.get_wm_info()['window']
+
+
+# 显式声明 64 位指针类型，避免句柄被截断导致比较失配
+_user32.GetForegroundWindow.restype = wintypes.HWND
+_user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+
+
+def _window_focused(hwnd):
+    """窗口是否持有键盘焦点（键盘交互的前提）"""
+    return _user32.GetForegroundWindow() == hwnd
 
 
 def _set_window_transparent(hwnd):
@@ -74,6 +99,18 @@ def _is_lbutton_pressed():
     return (_user32.GetAsyncKeyState(_VK_LBUTTON) & 0x8000) != 0
 
 
+def _blit_rounded(surf, color, rect, radius, width=0):
+    """在 SRCALPHA 临时面上画半透明圆角矩形后贴回 surf。
+    直接在显示面上用 RGBA 色调用 pygame.draw 会被忽略 alpha，
+    所以需要临时面来保证半透明效果。"""
+    x, y, w, h = int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3])
+    if w <= 0 or h <= 0:
+        return
+    temp = pygame.Surface((w, h), pygame.SRCALPHA)
+    pygame.draw.rect(temp, color, temp.get_rect(), width, border_radius=radius)
+    surf.blit(temp, (x, y))
+
+
 # ─── 右键菜单 ────────────────────────────────
 
 class ContextMenu:
@@ -87,7 +124,6 @@ class ContextMenu:
         self.quit_h = 34
         self.header_h = 38
         self.pad = 8
-        self.scrollbar_w = 0
         self.max_visible = 7
         self.scroll_offset = 0
         self.selected_index = 0
@@ -104,8 +140,6 @@ class ContextMenu:
         self.hint_font = None
         self.title_font = None
         self.hover_index = -1
-        self._scroll_btn_up = None   # 屏幕坐标 rect (▲)
-        self._scroll_btn_down = None # 屏幕坐标 rect (▼)
 
     @property
     def _visible_count(self):
@@ -163,15 +197,6 @@ class ContextMenu:
             return False
         return (self.menu_x <= sx <= self.menu_x + self._menu_w and
                 self.menu_y <= sy <= self.menu_y + self._menu_h)
-
-    def scroll(self, delta):
-        """网格菜单无需滚动，保留接口兼容旧事件处理。"""
-        return
-
-    def move_selection(self, delta):
-        """线性选择，用于滚轮或兼容操作。"""
-        self.selected_index = (self.selected_index + delta) % len(self.items)
-        self.hover_index = -1
 
     def move_grid(self, dx=0, dy=0):
         """按视觉网格移动键盘焦点。"""
@@ -251,15 +276,6 @@ class ContextMenu:
         idx = self._index_at(sx, sy)
         self.hover_index = idx if idx is not None else -1
 
-    def _draw_rounded_rect(self, surf, color, rect, radius):
-        x, y, w, h = rect
-        pygame.draw.rect(surf, color, (x + radius, y, w - radius * 2, h))
-        pygame.draw.rect(surf, color, (x, y + radius, w, h - radius * 2))
-        pygame.draw.circle(surf, color, (x + radius, y + radius), radius)
-        pygame.draw.circle(surf, color, (x + w - radius, y + radius), radius)
-        pygame.draw.circle(surf, color, (x + radius, y + h - radius), radius)
-        pygame.draw.circle(surf, color, (x + w - radius, y + h - radius), radius)
-
     def draw(self, surf, win_l, win_t):
         if not self.active:
             return
@@ -307,29 +323,38 @@ class ContextMenu:
                                  (rect.left, rect.top - 3),
                                  (rect.right, rect.top - 3))
                 if focused:
-                    pygame.draw.rect(surf, (127, 51, 66, 145), rect, border_radius=8)
+                    _blit_rounded(surf, (127, 51, 66, 160), rect, 8)
                 quit_text = self.font.render(f"{symbols[action]}  保存并退出", True, (244, 164, 178))
                 surf.blit(quit_text, quit_text.get_rect(center=rect.center))
                 continue
 
             if focused:
-                pygame.draw.rect(surf, (78, 103, 211, 205), rect, border_radius=9)
-                label_color, hint_color, symbol_color = ((255, 255, 255),) * 3
+                _blit_rounded(surf, (72, 98, 214, 215), rect, 9)
+                # 左侧高亮条
+                _blit_rounded(surf, (158, 182, 255, 235),
+                              (rect.x + 5, rect.y + 10, 3, rect.h - 20), 2)
+                label_color = hint_color = symbol_color = (255, 255, 255)
+                badge_color = (255, 255, 255, 46)
             else:
-                pygame.draw.rect(surf, (38, 41, 52, 210), rect, border_radius=9)
-                pygame.draw.rect(surf, (65, 70, 87, 115), rect, 1, border_radius=9)
-                label_color = (239, 241, 248)
-                hint_color = (137, 145, 169)
-                symbol_color = (151, 162, 192)
+                _blit_rounded(surf, (37, 40, 52, 215), rect, 9)
+                _blit_rounded(surf, (64, 69, 86, 120), rect, 9, width=1)
+                label_color = (238, 240, 248)
+                hint_color = (136, 144, 168)
+                symbol_color = (150, 162, 195)
+                badge_color = (255, 255, 255, 18)
                 if action == 'delete_book':
-                    label_color = (241, 166, 178)
+                    label_color = (242, 168, 180)
+                    symbol_color = (242, 168, 180)
 
+            # 图标徽章：圆角小方块居中放符号
+            badge = pygame.Rect(rect.x + 9, rect.y + 10, 26, 26)
+            _blit_rounded(surf, badge_color, badge, 7)
             symbol = self.title_font.render(symbols[action], True, symbol_color)
-            surf.blit(symbol, (rect.x + 10, rect.y + 14))
+            surf.blit(symbol, symbol.get_rect(center=badge.center))
             txt = self.font.render(label, True, label_color)
-            surf.blit(txt, (rect.x + 31, rect.y + 6))
+            surf.blit(txt, (rect.x + 44, rect.y + 7))
             hint_txt = self.hint_font.render(hint, True, hint_color)
-            surf.blit(hint_txt, (rect.x + 31, rect.y + 26))
+            surf.blit(hint_txt, (rect.x + 44, rect.y + 25))
 
 
 # ════════════════════════════════════════════
@@ -369,7 +394,7 @@ def _do_import_words(pet, word_list):
 
     if success:
         # 首次导入后 3 秒弹出第一个单词
-        pet.word_timer = WORD_INTERVAL - 3
+        pet.word_timer = pet.word_interval - 3
         pet.add_feedback(f'✅ {msg}', (100, 255, 100), 1)
     else:
         pet.add_feedback(f'❌ {msg}', (255, 100, 100), 1)
@@ -471,7 +496,7 @@ def _do_switch_book(word_list, pet):
     if chosen[0] and chosen[0] != cur_after:
         word_list.switch_book(chosen[0])
         pet.word_bubble_active = False
-        pet.word_timer = WORD_INTERVAL
+        pet.word_timer = pet.word_interval
         pet.add_feedback(f'📚 {chosen[0]}', (100, 200, 255), 2)
         pet.add_particles((100, 200, 255), 6)
     elif not chosen[0]:
@@ -504,7 +529,7 @@ def _do_delete_book(word_list, pet):
         success, msg = word_list.delete_book(name)
         if success:
             pet.word_bubble_active = False
-            pet.word_timer = WORD_INTERVAL
+            pet.word_timer = pet.word_interval
             pet.add_feedback(f'🗑 {name}', (255, 180, 100), 2)
         else:
             pet.add_feedback(f'❌ {msg}', (255, 100, 100), 2)
@@ -512,7 +537,6 @@ def _do_delete_book(word_list, pet):
 
 def _do_set_interval(pet):
     """打开输入框设置单词间隔时间"""
-    global WORD_INTERVAL
     try:
         import tkinter as tk
         from tkinter import simpledialog
@@ -526,8 +550,8 @@ def _do_set_interval(pet):
     try:
         result = simpledialog.askinteger(
             '设置单词间隔',
-            f'输入间隔秒数（当前: {WORD_INTERVAL} 秒）:',
-            initialvalue=WORD_INTERVAL,
+            f'输入间隔秒数（当前: {pet.word_interval} 秒）:',
+            initialvalue=pet.word_interval,
             minvalue=10,
             maxvalue=3600,
         )
@@ -535,7 +559,6 @@ def _do_set_interval(pet):
         root.destroy()
 
     if result is not None:
-        WORD_INTERVAL = result
         pet.word_interval = result
         pet.save()  # 持久化
         pet.add_feedback(f'⏱ {result}秒', (100, 200, 255), 2)
@@ -562,6 +585,8 @@ def _handle_menu_action(action, pet, word_list):
 
 
 def main():
+    _install_crash_logger()
+
     # ——— 单实例锁：已有实例运行则退出 ———
     _kernel32 = ctypes.windll.kernel32
     _kernel32.CreateMutexW.argtypes = [wintypes.LPCVOID, wintypes.BOOL, wintypes.LPCWSTR]
@@ -582,12 +607,12 @@ def main():
     character.load_gifs()
 
     pet = Pet()
-    global WORD_INTERVAL
-    WORD_INTERVAL = pet.word_interval  # 使用持久化的间隔值
     word_list = WordList()
-    # 启动时有单词则尽快弹出第一个词（避免等 150 秒）
+    # 启动时展示一次状态面板，顺带露出快捷键提示
+    pet.show_panel(4)
+    # 启动时有单词则尽快弹出第一个词（避免等完整间隔）
     if word_list.has_words():
-        pet.word_timer = max(pet.word_timer, WORD_INTERVAL - 3)
+        pet.word_timer = max(pet.word_timer, pet.word_interval - 3)
     menu = ContextMenu()
     clock = pygame.time.Clock()
 
@@ -595,6 +620,7 @@ def main():
     _set_clickthrough(hwnd, True)
     ct_enabled = True
     prev_lbtn = False  # 上一帧左键状态（用于全局点击检测）
+    cur_cursor = None  # 当前光标缓存，避免每帧重设
 
     running = True
     while running:
@@ -602,6 +628,7 @@ def main():
         dt = dt_ms / 1000.0  # 秒
         cx, cy = _get_cursor_screen_pos()
         over_pet = pet.hit_test(cx, cy)
+        kb_focus = _window_focused(hwnd)  # 键盘交互需要窗口持有焦点
 
         # 鼠标穿透切换（仅在需要改变时）
         need_ct = not (over_pet or pet.is_dragging or menu.active or pet.word_bubble_active)
@@ -622,11 +649,24 @@ def main():
 
         pet.is_hovered = over_pet and not pet.is_dragging
 
-        # 悬停时显示手型光标
-        if pet.is_hovered:
-            pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
-        else:
-            pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_ARROW)
+        # 悬停时显示手型光标（仅在变化时切换）
+        wanted = pygame.SYSTEM_CURSOR_HAND if pet.is_hovered else pygame.SYSTEM_CURSOR_ARROW
+        if wanted != cur_cursor:
+            pygame.mouse.set_cursor(wanted)
+            cur_cursor = wanted
+
+        # ── 键盘移动（方向键 / WASD，需窗口持有焦点）──
+        if not menu.active and not pet.word_bubble_active and not pet.is_dragging:
+            keys = pygame.key.get_pressed()
+            kdx = (keys[pygame.K_RIGHT] or keys[pygame.K_d]) - (keys[pygame.K_LEFT] or keys[pygame.K_a])
+            kdy = (keys[pygame.K_DOWN] or keys[pygame.K_s]) - (keys[pygame.K_UP] or keys[pygame.K_w])
+            if kdx or kdy:
+                if kdx:
+                    pet.direction = 1 if kdx > 0 else -1
+                pet.x += kdx * KEY_MOVE_SPEED * dt
+                pet.y += kdy * KEY_MOVE_SPEED * dt
+                pet._clamp_position()
+                pet.show_panel(0.8)  # 移动期间保持状态面板可见
 
         # ── 事件 ──
         for ev in pygame.event.get():
@@ -652,31 +692,21 @@ def main():
                     pet.word_bubble_active = False
                     word_list.advance()
                     pet.word_timer = 0.0
+                # 字母键永远是小写 keysym（Shift 不改变 ev.key），无 K_F/K_P 常量
+                elif ev.key == pygame.K_f:
+                    pet.on_feed()
+                    pet.show_panel()
+                elif ev.key == pygame.K_p:
+                    pet.on_pet()
+                    pet.show_panel()
+                elif ev.key in (pygame.K_SPACE, pygame.K_RETURN):
+                    pet.on_click()
+                    pet.show_panel()
                 elif ev.key == pygame.K_ESCAPE:
                     running = False
 
-            elif ev.type == pygame.MOUSEWHEEL:
-                if menu.active:
-                    menu.scroll(ev.y)
-
             elif ev.type == pygame.MOUSEBUTTONDOWN:
                 if menu.active:
-                    if ev.button == 4:    # 滚轮上滑
-                        menu.scroll(1)
-                        continue
-                    elif ev.button == 5:  # 滚轮下滑
-                        menu.scroll(-1)
-                        continue
-                    # 检查是否点击了 ▲/▼ 滚动按钮
-                    if menu._scroll_btn_up and menu._scroll_btn_down:
-                        ux, uy, uw, uh = menu._scroll_btn_up
-                        dx_, dy_, dw_, dh_ = menu._scroll_btn_down
-                        if ux <= cx <= ux + uw and uy <= cy <= uy + uh:
-                            menu.scroll(1)
-                            continue
-                        if dx_ <= cx <= dx_ + dw_ and dy_ <= cy <= dy_ + dh_:
-                            menu.scroll(-1)
-                            continue
                     action = menu.hit_test(cx, cy)
                     if action:
                         running = _handle_menu_action(action, pet, word_list)
@@ -697,6 +727,8 @@ def main():
                             continue  # 不触发拖动和开心
 
                     if over_pet:
+                        # 分层穿透窗口点击不一定触发系统激活，显式抢焦点
+                        _user32.SetForegroundWindow(hwnd)
                         pet.is_dragging = True
                         pet.drag_offset_x = cx - pet.x
                         pet.drag_offset_y = cy - pet.y
@@ -724,7 +756,7 @@ def main():
         # 单词定时器
         if word_list.has_words() and not pet.word_bubble_active and not menu.active:
             pet.word_timer += dt
-            if pet.word_timer >= WORD_INTERVAL:
+            if pet.word_timer >= pet.word_interval:
                 pet.word_bubble_active = True
                 pet.word_timer = 0.0
 
@@ -737,6 +769,11 @@ def main():
         character.draw_pet(screen, pet)
         character.draw_status(screen, pet)
         character.draw_feedback(screen, pet)
+
+        # 悬停但未获得焦点时提示：键盘需要先点击激活
+        if (pet.is_hovered and not kb_focus
+                and not menu.active and not pet.word_bubble_active):
+            character.draw_kb_hint(screen)
 
         if pet.word_bubble_active:
             progress = f'{word_list.index + 1}/{len(word_list.words)}'

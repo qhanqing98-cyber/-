@@ -41,6 +41,7 @@ PET_MOOD_BOOST = 5
 # ——— 行为参数 ———
 BEHAVIOR_EVAL_INTERVAL = 180   # 每 180 帧 (~3 秒) 评估一次行为
 WALK_SPEED = 1.5               # 像素/帧
+KEY_MOVE_SPEED = 240           # 键盘移动速度（像素/秒）
 
 # ——— 行为名称 ———
 B_IDLE = 'idle'
