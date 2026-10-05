@@ -11,9 +11,14 @@ dist/
 *.tmp
 *.spec
 save.json
+settings.json
 words.json
 words_index.json
 *.log
 DeskPet.exe
 reasonix.toml
 .workbuddy/
+progress/
+*.bak
+.legacy_migrated
+artifacts/

@@ -1,417 +1,380 @@
-# words.py — 多单词本管理（每本独立文件）
-"""支持多个单词本，各本存为独立文件，避免大文件卡顿。"""
-
+"""词库与学习进度分开保存；切词只写很小的进度文件。"""
+import csv
+import io
 import json
 import os
-
+import shutil
 from config import get_data_path, get_resource_path
+from storage import backup_corrupt, finite_number, log, write_json_atomic
 
 _DIR = get_data_path()
 INDEX_FILE = os.path.join(_DIR, 'words_index.json')
 OLD_FILE = os.path.join(_DIR, 'words.json')
+_write_json_atomic = write_json_atomic
 
 
-def _write_json_atomic(path, data):
-    """先写临时文件再替换，避免异常退出留下半截 JSON。"""
-    temp_path = f'{path}.tmp'
-    try:
-        with open(temp_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_path, path)
-        return True
-    except Exception:
-        try:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-        except OSError:
-            pass
-        raise
+def _valid_name(name):
+    return (isinstance(name, str) and bool(name.strip()) and name.casefold() != 'index'
+            and not any(c in name for c in '<>:"/\\|?*')
+            and not any(ord(c) < 32 for c in name) and not name.endswith('.')
+            and len(name) <= 100)
 
 
 def _book_path(name):
-    """返回单词本文件的路径"""
+    if not _valid_name(name):
+        raise ValueError('单词本名称包含非法字符或使用了保留名称')
     return os.path.join(_DIR, f'words_{name}.json')
 
 
+def _progress_path(name):
+    _book_path(name)
+    return os.path.join(_DIR, 'progress', f'words_{name}.json')
+
+
+def _normalize_words(items):
+    if not isinstance(items, list):
+        raise ValueError('words 必须是列表')
+    words, seen = [], set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError('每个单词必须是对象')
+        word, meaning = item.get('word'), item.get('meaning', '')
+        if not isinstance(word, str) or not isinstance(meaning, str):
+            raise ValueError('word 和 meaning 必须是字符串')
+        word, meaning = word.strip(), meaning.strip()
+        if word and (word, meaning) not in seen:
+            seen.add((word, meaning))
+            words.append({'word': word, 'meaning': meaning})
+    return words
+
+
 class WordList:
-    """管理多个单词本的加载、保存、导入和切换（每本独立文件）"""
-
     def __init__(self):
-        self.books = {}          # {"书名": {"words": [...], "index": 0}, ...}
-        self.active_book = None  # 当前激活的单词本名
-        self._dirty = False      # 当前本是否有未保存的改动
+        self.books = {}
+        self.active_book = None
+        self._content_dirty = set()
+        self._progress_dirty = set()
+        self._blocked_books = set()
+        self._index_dirty = False
+        self.last_error = ''
         self._load_or_migrate()
-
-    # ── 当前书快捷属性 ─────────────────────────
 
     @property
     def words(self):
-        if self.active_book and self.active_book in self.books:
-            return self.books[self.active_book]['words']
-        return []
+        return self.books.get(self.active_book, {}).get('words', [])
 
     @words.setter
-    def words(self, val):
-        if self.active_book and self.active_book in self.books:
-            self.books[self.active_book]['words'] = val
+    def words(self, value):
+        if self.active_book in self.books:
+            self.books[self.active_book]['words'] = _normalize_words(value)
+            self._content_dirty.add(self.active_book)
+            self.index = self.index
 
     @property
     def index(self):
-        if self.active_book and self.active_book in self.books:
-            return self.books[self.active_book]['index']
-        return 0
+        return self.books.get(self.active_book, {}).get('index', 0)
 
     @index.setter
-    def index(self, val):
-        if self.active_book and self.active_book in self.books:
-            self.books[self.active_book]['index'] = val
+    def index(self, value):
+        if self.active_book in self.books:
+            self.books[self.active_book]['index'] = self._safe_index(value, len(self.words))
+            self._progress_dirty.add(self.active_book)
 
-    # ── 持久化 ────────────────────────────────
+    @staticmethod
+    def _safe_index(value, count):
+        return int(finite_number(value, 0, 0)) % count if count else 0
+
+    def _error(self, message):
+        self.last_error = message
+        log.error(message)
+        return False
 
     def _load_or_migrate(self):
-        """加载 index 文件，兼容旧 words.json；出错时扫描文件系统恢复"""
-        # 第1步：尝试加载新格式 index
+        os.makedirs(_DIR, exist_ok=True)
         if os.path.exists(INDEX_FILE):
             try:
-                with open(INDEX_FILE, 'r', encoding='utf-8') as f:
-                    idx = json.load(f)
-                active = idx.get('active_book', '')
-                book_names = idx.get('books', [])
-                if not isinstance(book_names, list):
-                    book_names = []
-                if active and active in book_names:
-                    self._load_book(active)
-                elif book_names:
-                    self._load_book(book_names[0])
-                else:
-                    self.books = {'默认': {'words': [], 'index': 0}}
-                    self.active_book = '默认'
-                return
-            except Exception as e:
-                print(f"[words] 索引文件损坏({e})，尝试扫描文件系统恢复...")
-
-        # 第2步：尝试从旧 words.json 迁移
+                with open(INDEX_FILE, encoding='utf-8-sig') as stream:
+                    data = json.load(stream)
+                names = data['books']
+                if not isinstance(names, list) or not all(_valid_name(n) for n in names):
+                    raise ValueError('索引中的单词本名称无效')
+                names = [n for n in names if os.path.exists(_book_path(n))]
+                if names:
+                    active = data.get('active_book')
+                    self._load_book(active if active in names else names[0])
+                    return
+            except (OSError, ValueError, KeyError, TypeError):
+                log.exception('索引读取失败，将扫描词库恢复')
+                try:
+                    backup_corrupt(INDEX_FILE)
+                except OSError:
+                    self._index_blocked = True
         if os.path.exists(OLD_FILE):
             try:
-                with open(OLD_FILE, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-
-                if 'books' in data:
-                    for name, book in data['books'].items():
-                        self._save_one_book(name, book)
-                    active = data.get('active_book', list(data['books'].keys())[0] if data['books'] else '默认')
-                    self._write_index(active, list(data['books'].keys()))
-                    os.remove(OLD_FILE)
-                    self._load_book(active)
-                    return
-
-                old_words = data.get('words', [])
-                old_index = data.get('index', 0)
-                self._save_one_book('默认', {'words': old_words, 'index': old_index})
-                self._write_index('默认', ['默认'])
+                with open(OLD_FILE, encoding='utf-8-sig') as stream:
+                    data = json.load(stream)
+                legacy = data.get('books', {'默认': data})
+                normalized = {}
+                for name, book in legacy.items():
+                    _book_path(name)
+                    words = _normalize_words(book.get('words', []))
+                    normalized[name] = {'words': words, 'index': self._safe_index(book.get('index', 0), len(words))}
+                if not normalized:
+                    raise ValueError('旧词库为空')
+                for name, book in normalized.items():
+                    if os.path.exists(_book_path(name)):
+                        continue  # 迁移重试时保留已存在的新词库。
+                    if not self._save_one_book(name, book):
+                        raise OSError(self.last_error)
+                active = data.get('active_book')
+                if active not in normalized:
+                    active = next(iter(normalized))
+                if not self._write_index(active, list(normalized)):
+                    raise OSError(self.last_error)
+                shutil.copy2(OLD_FILE, OLD_FILE + '.migrated.bak')
                 os.remove(OLD_FILE)
-                self._load_book('默认')
+                self._load_book(active)
                 return
-            except Exception as e:
-                print(f"[words] 旧格式迁移失败: {e}")
-
-        # 第3步：扫描文件系统恢复单词本
+            except (OSError, ValueError, TypeError, AttributeError):
+                log.exception('旧词库迁移失败，原文件保留')
         scanned = self._scan_books()
-        if scanned:
-            first = scanned[0]
-            self._load_book(first)
-            self._write_index(first, scanned)
-            print(f"[words] 从文件系统恢复了 {len(scanned)} 个单词本")
-            return
-
-        # 第4步：尝试从打包资源复制初始单词本（仅打包模式生效）
-        if self._copy_bundled_books():
+        if not scanned:
+            self._copy_bundled_books()
             scanned = self._scan_books()
-            if scanned:
-                first = scanned[0]
-                self._load_book(first)
-                self._write_index(first, scanned)
-                print(f"[words] 从打包资源复制了 {len(scanned)} 个单词本")
-                return
-
-        # 没有任何数据 → 创建默认空本
-        self.books = {'默认': {'words': [], 'index': 0}}
-        self.active_book = '默认'
-        self._save_one_book('默认', self.books['默认'])
-        self._write_index('默认', ['默认'])
+        if scanned:
+            self._load_book(scanned[0])
+        else:
+            self.active_book = '默认'
+            self.books['默认'] = {'words': [], 'index': 0}
+            self._content_dirty.add('默认')
+        self._index_dirty = True
+        self.save()
 
     def _copy_bundled_books(self):
-        """首次运行时，将打包在 exe 内的单词本文件复制到数据目录（仅打包模式有效）"""
         res_dir = get_resource_path()
-        if res_dir == _DIR:
-            return False  # 源码模式，无需复制
+        if os.path.abspath(res_dir) == os.path.abspath(_DIR):
+            return False
         copied = False
-        for fname in os.listdir(res_dir):
-            if fname.startswith('words_') and fname.endswith('.json'):
-                dst = os.path.join(_DIR, fname)
-                if not os.path.exists(dst):
-                    src = os.path.join(res_dir, fname)
+        for filename in os.listdir(res_dir):
+            if filename.startswith('words_') and filename.endswith('.json') and filename != 'words_index.json':
+                target = os.path.join(_DIR, filename)
+                if not os.path.exists(target):
                     try:
-                        with open(src, 'rb') as sf, open(dst, 'wb') as df:
-                            df.write(sf.read())
+                        shutil.copy2(os.path.join(res_dir, filename), target)
                         copied = True
-                    except Exception:
-                        pass
+                    except OSError:
+                        log.exception('内置词库复制失败：%s', filename)
         return copied
 
     def _load_book(self, name):
-        """加载指定单词本到内存。文件不存在时创建空本。"""
         path = _book_path(name)
+        book = {'words': [], 'index': 0}
         if os.path.exists(path):
             try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                self.books[name] = data
-            except Exception as e:
-                print(f"[words] 加载单词本「{name}」失败({e})，创建空本")
-                self.books[name] = {'words': [], 'index': 0}
-        else:
-            print(f"[words] 单词本文件「{name}」不存在，创建空本")
-            self.books[name] = {'words': [], 'index': 0}
+                with open(path, encoding='utf-8-sig') as stream:
+                    data = json.load(stream)
+                words = _normalize_words(data['words'])
+                book = {'words': words, 'index': self._safe_index(data.get('index', 0), len(words))}
+            except (OSError, ValueError, KeyError, TypeError):
+                self._error(f'单词本「{name}」损坏，请从备份恢复或重新导入')
+                self._blocked_books.add(name)
+                try:
+                    backup_corrupt(path)
+                except OSError:
+                    log.exception('损坏词库备份失败')
+        progress = _progress_path(name)
+        if os.path.exists(progress):
+            try:
+                with open(progress, encoding='utf-8') as stream:
+                    saved = json.load(stream)
+                book['index'] = self._safe_index(saved['index'], len(book['words']))
+            except (OSError, ValueError, KeyError, TypeError):
+                log.exception('学习进度损坏，恢复词库原始进度')
+                try:
+                    backup_corrupt(progress)
+                except OSError:
+                    self._blocked_books.add(name)
+        self.books[name] = book
         self.active_book = name
-        self._dirty = False
 
     def _save_one_book(self, name, data):
-        """写入单个单词本文件。返回成功与否。"""
-        path = _book_path(name)
+        if name in self._blocked_books:
+            return self._error(f'单词本「{name}」损坏，已禁止自动覆盖')
         try:
-            _write_json_atomic(path, data)
+            _write_json_atomic(_book_path(name), data)
+            self._content_dirty.discard(name)
             return True
-        except Exception as e:
-            print(f"[words] 保存单词本「{name}」失败: {e}")
+        except (OSError, ValueError):
+            return self._error(f'保存单词本「{name}」失败，请检查磁盘空间或权限')
+
+    def _save_progress(self, name):
+        if name in self._blocked_books:
             return False
+        try:
+            _write_json_atomic(_progress_path(name), {'index': self.books[name]['index']})
+            self._progress_dirty.discard(name)
+            return True
+        except (OSError, ValueError):
+            return self._error(f'保存「{name}」学习进度失败，将在下次保存时重试')
 
     def _save_active_book(self):
-        """保存当前激活的单词本。返回成功与否。"""
-        if self.active_book and self.active_book in self.books:
-            ok = self._save_one_book(self.active_book, self.books[self.active_book])
-            if ok:
-                self._dirty = False
-            return ok
-        return False
+        name = self.active_book
+        if name not in self.books:
+            return False
+        if name in self._content_dirty and not self._save_one_book(name, self.books[name]):
+            return False
+        return self._save_progress(name) if name in self._progress_dirty else True
 
     def _write_index(self, active, book_names):
-        """写入 index 文件。返回成功与否。"""
+        if getattr(self, '_index_blocked', False):
+            return self._error('索引备份失败，已禁止自动覆盖')
         try:
-            _write_json_atomic(
-                INDEX_FILE,
-                {'active_book': active, 'books': sorted(book_names)},
-            )
+            _write_json_atomic(INDEX_FILE, {'active_book': active, 'books': sorted(book_names)})
+            self._index_dirty = False
             return True
-        except Exception as e:
-            print(f"[words] 保存索引文件失败: {e}")
-            return False
+        except (OSError, ValueError):
+            return self._error('保存词库索引失败，将在下次保存时重试')
 
     def save(self):
-        """持久化当前单词本 + index（合并已有索引，防止覆盖其他单词本）"""
-        self._save_active_book()
-        # 读取已有索引，合并当前内存中的单词本
-        existing_books = set()
-        if os.path.exists(INDEX_FILE):
-            try:
-                with open(INDEX_FILE, 'r', encoding='utf-8') as f:
-                    idx = json.load(f)
-                existing_books = set(idx.get('books', []))
-            except Exception:
-                pass
-        # 只保留文件确实存在的（过滤掉已被删除的）
-        existing_books = {b for b in existing_books if os.path.exists(_book_path(b))}
-        all_books = existing_books | set(self.books.keys())
-        self._write_index(self.active_book, list(all_books))
-
-    # ── 查询 ──────────────────────────────────
+        """只写发生变化的数据；失败的项目继续保留待保存标记。"""
+        ok = True
+        for name in list(self._content_dirty):
+            ok = self._save_one_book(name, self.books[name]) and ok
+        for name in list(self._progress_dirty):
+            ok = self._save_progress(name) and ok
+        if self._index_dirty:
+            ok = self._write_index(self.active_book, self.list_books()) and ok
+        if ok and not self._blocked_books:
+            self.last_error = ''
+        return ok
 
     def has_words(self):
-        return len(self.words) > 0
+        return bool(self.words)
 
     def get_current(self):
-        if not self.words or self.index >= len(self.words):
-            return None
-        return self.words[self.index]
+        return self.words[self.index] if self.words else None
 
     def advance(self):
         if not self.words:
-            return
-        self.index = (self.index + 1) % len(self.words)
-        self.save()
+            return True
+        self.index = self.index + 1
+        return self._save_progress(self.active_book)
 
     def get_active_book_name(self):
         return self.active_book or ''
 
     def list_books(self):
-        """列出所有已知单词本（内存 + 文件系统扫描）"""
-        mem = set(self.books.keys())
-        # 也从索引文件中读取
-        if os.path.exists(INDEX_FILE):
-            try:
-                with open(INDEX_FILE, 'r', encoding='utf-8') as f:
-                    idx = json.load(f)
-                mem.update(idx.get('books', []))
-            except Exception:
-                pass
-        # 也扫描文件系统
-        mem.update(self._scan_books())
-        return sorted(mem)
+        return sorted(set(self.books) | set(self._scan_books()))
 
     def _scan_books(self):
-        """扫描 filesystem 获取所有单词本名"""
-        names = []
-        prefix = 'words_'
-        suffix = '.json'
-        for fname in os.listdir(_DIR):
-            if fname.startswith(prefix) and fname.endswith(suffix) and fname != 'words_index.json':
-                name = fname[len(prefix):-len(suffix)]
-                names.append(name)
-        return names
-
-    # ── 切换单词本 ─────────────────────────────
+        return sorted(filename[6:-5] for filename in os.listdir(_DIR)
+                      if filename.startswith('words_') and filename.endswith('.json')
+                      and _valid_name(filename[6:-5]))
 
     def switch_book(self, name):
-        if name in self.books:
-            # 保存当前本
-            self._save_active_book()
-            # 如果目标本不在内存中，从文件加载
-            if name not in self.books:
-                self._load_book(name)
-            else:
-                self.active_book = name
-            self.save()
-            return True
-        # 如果在文件系统但不在内存
-        path = _book_path(name)
-        if os.path.exists(path):
-            self._save_active_book()
+        if not _valid_name(name) or name not in self.list_books():
+            return False
+        if not self.save():
+            return False
+        if name not in self.books:
             self._load_book(name)
-            self.save()
-            return True
-        return False
+        else:
+            self.active_book = name
+        self._index_dirty = True
+        return self.save()
 
     def delete_book(self, name):
-        """删除指定单词本（含文件）。返回 (success, message)"""
-        known_books = self.list_books()
-        if name not in known_books:
-            return False, f"单词本「{name}」不存在"
-        if len(known_books) <= 1:
-            return False, "至少保留一个单词本"
-
-        # 删除文件
-        path = _book_path(name)
-        if os.path.exists(path):
-            try:
-                os.remove(path)
-            except Exception as e:
-                return False, f"删除文件失败: {e}"
+        names = self.list_books()
+        if name not in names:
+            return False, f'单词本「{name}」不存在'
+        if len(names) <= 1:
+            return False, '至少保留一个单词本'
+        try:
+            if os.path.exists(_book_path(name)):
+                os.remove(_book_path(name))
+            if os.path.exists(_progress_path(name)):
+                os.remove(_progress_path(name))
+        except OSError as error:
+            return False, f'删除文件失败：{error}'
         self.books.pop(name, None)
-        # 如果删的是当前激活的本，切到另一个
+        self._blocked_books.discard(name)
+        self._content_dirty.discard(name)
+        self._progress_dirty.discard(name)
         if self.active_book == name:
-            new_active = next(book for book in known_books if book != name)
-            self._load_book(new_active)
-        self.save()
-        return True, f"已删除「{name}」"
-
-    # ── 导入 ──────────────────────────────────
+            self._load_book(next(n for n in names if n != name))
+        self._index_dirty = True
+        if not self.save():
+            return False, '文件已删除，但索引保存失败，请重试保存'
+        return True, f'已删除「{name}」'
 
     def import_file(self, path, book_name=None):
-        """导入单词表为新单词本。返回 (success, message)"""
-        if not os.path.exists(path):
-            return False, "文件不存在"
-
         try:
-            # utf-8-sig 同时兼容普通 UTF-8 和 Excel 常见的 BOM 文件。
-            with open(path, 'r', encoding='utf-8-sig') as f:
-                content = f.read()
-        except Exception as e:
-            return False, f"读取文件失败: {e}"
-
+            with open(path, encoding='utf-8-sig') as stream:
+                content = stream.read()
+        except (OSError, UnicodeError) as error:
+            return False, f'读取文件失败：{error}'
         ext = os.path.splitext(path)[1].lower()
-        new_words = []
-
         if ext == '.json':
             ok, result = self._parse_json(content)
             if not ok:
                 return False, result
             new_words = result
         else:
-            new_words = self._parse_text(content)
-
+            try:
+                new_words = self._parse_csv(content) if ext == '.csv' else self._parse_text(content)
+            except csv.Error as error:
+                return False, f'CSV 解析失败：{error}'
         if not new_words:
-            return False, "未找到有效单词"
-
-        if not book_name:
-            book_name = os.path.splitext(os.path.basename(path))[0]
-
-        # 保护：单词本名不能是 "index"（会与索引文件冲突）
-        if book_name == 'index':
-            book_name = 'index_book'
-
-        # 保存当前本
-        self._save_active_book()
-
-        # 添加并切换到新本
-        self.books[book_name] = {'words': new_words, 'index': 0}
-        self.active_book = book_name
-
-        # 先写入单词本文件
-        if not self._save_one_book(book_name, self.books[book_name]):
-            return False, f"保存单词本「{book_name}」失败，请检查磁盘空间或权限"
-
-        # 用 save() 写入索引（会自动合并已有单词本）
-        self.save()
-
-        # 验证写入成功
-        if not os.path.exists(_book_path(book_name)):
-            return False, f"单词本文件未能成功写入"
-
-        return True, f"成功导入 {len(new_words)} 个单词到「{book_name}」"
+            return False, '未找到有效单词'
+        name = book_name or os.path.splitext(os.path.basename(path))[0]
+        if isinstance(name, str) and name.casefold() == 'index':
+            name = 'index_book'
+        if not _valid_name(name):
+            return False, '单词本名称包含非法字符或过长'
+        base, number = name, 2
+        known = {n.casefold() for n in self.list_books()}
+        while name.casefold() in known:
+            suffix = f' ({number})'
+            name = base[:100 - len(suffix)] + suffix
+            number += 1
+        if not self.save():
+            return False, self.last_error
+        book = {'words': new_words, 'index': 0}
+        if not self._save_one_book(name, book):
+            return False, self.last_error
+        self.books[name] = book
+        self.active_book = name
+        self._index_dirty = True
+        if not self.save():
+            return False, f'词库已保存，但索引保存失败：{self.last_error}'
+        return True, f'成功导入 {len(new_words)} 个单词到「{name}」'
 
     def _parse_json(self, content):
         try:
             data = json.loads(content)
-        except json.JSONDecodeError as e:
-            return False, f"JSON 解析失败: {e}"
+            if isinstance(data, dict):
+                data = data['words'] if 'words' in data else [data]
+            words = _normalize_words(data)
+            if not words:
+                raise ValueError('未找到有效单词')
+            return True, words
+        except (ValueError, TypeError, KeyError) as error:
+            return False, f'JSON 解析失败：{error}'
 
-        words = []
-        if isinstance(data, list):
-            for item in data:
-                if isinstance(item, dict):
-                    w = item.get('word', '').strip()
-                    m = item.get('meaning', '').strip()
-                    if w:
-                        words.append({'word': w, 'meaning': m})
-        elif isinstance(data, dict):
-            w = data.get('word', '').strip()
-            m = data.get('meaning', '').strip()
-            if w:
-                words.append({'word': w, 'meaning': m})
-
-        if not words:
-            return False, "JSON 格式应为 [{\"word\":\"...\",\"meaning\":\"...\"}]"
-        return True, words
+    def _parse_csv(self, content):
+        rows = list(csv.reader(io.StringIO(content), strict=True))
+        if rows and [s.strip().lower() for s in rows[0][:2]] == ['word', 'meaning']:
+            rows = rows[1:]
+        return _normalize_words([{'word': row[0], 'meaning': ','.join(row[1:])}
+                                 for row in rows if row and row[0].strip()])
 
     def _parse_text(self, content):
-        words = []
-        for line in content.strip().split('\n'):
+        items = []
+        for line in content.splitlines():
             line = line.strip()
             if not line:
                 continue
-            if '|' in line:
-                parts = line.split('|', 1)
-                w, m = parts[0].strip(), parts[1].strip() if len(parts) > 1 else ''
-            elif '\t' in line:
-                parts = line.split('\t', 1)
-                w, m = parts[0].strip(), parts[1].strip() if len(parts) > 1 else ''
-            elif ',' in line:
-                parts = line.split(',', 1)
-                w, m = parts[0].strip(), parts[1].strip() if len(parts) > 1 else ''
-            else:
-                w, m = line, ''
-            if w:
-                words.append({'word': w, 'meaning': m})
-        return words
+            separator = next((s for s in ('|', '\t', ',') if s in line), None)
+            parts = line.split(separator, 1) if separator else [line]
+            items.append({'word': parts[0], 'meaning': parts[1] if len(parts) > 1 else ''})
+        return _normalize_words(items)

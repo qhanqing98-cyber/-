@@ -4,7 +4,17 @@ import random
 import math
 import json
 import os
-from config import *
+from config import (DEFAULT_PET_X, DEFAULT_PET_Y, WINDOW_WIDTH, WINDOW_HEIGHT,
+                    PET_CENTER_X, PET_CENTER_Y, SCREEN_WIDTH, SCREEN_HEIGHT,
+                    B_IDLE, B_WALK, B_SLEEP, B_HAPPY, B_SAD, B_SURPRISED,
+                    B_PETTING, B_LIFT,
+                    WORD_INTERVAL, FPS, HUNGER_DECAY, MOOD_DECAY,
+                    ENERGY_WALK_DECAY, ENERGY_SLEEP_GAIN, ENERGY_IDLE_GAIN,
+                    BEHAVIOR_EVAL_INTERVAL, WALK_SPEED, CLICK_MOOD_BOOST,
+                    FEED_HUNGER_BOOST, PET_MOOD_BOOST, HIT_RADIUS, get_data_path)
+from desktop import nearest_work_area, movement_bounds
+from config import PET_MARGIN_X, PET_MARGIN_TOP, PET_MARGIN_BOTTOM
+from storage import write_json_atomic, backup_corrupt, finite_number, log
 
 SAVE_FILE = os.path.join(get_data_path(), 'save.json')
 
@@ -24,6 +34,7 @@ class Pet:
         self.frame = 0
         self.anim_frame = 0
         self.anim_timer = 0.0
+        self.animation_elapsed = 0.0
         self.animation_finished = True
         self.eval_timer = 0
         self.is_hovered = False
@@ -33,11 +44,13 @@ class Pet:
         self.drag_offset_y = 0
         self.happy_timer = 0
         self.surprised_timer = 0
+        self.petting_timer = 0
         self.sleep_z_timer = 0
         self.sleep_z_visible = False
 
         self.word_timer = 0.0
         self.word_bubble_active = False
+        self.reminder_reset_pending = False
 
         # x/y 表示宠物中心的屏幕坐标，边界按透明窗口内的绘制中心计算。
         # 这样拖拽后整个窗口仍留在屏幕内，不会因为存档位置而“找不到宠物”。
@@ -47,6 +60,8 @@ class Pet:
         self.max_y_scrn = SCREEN_HEIGHT - (WINDOW_HEIGHT - PET_CENTER_Y)
 
         self.feedback_items = []
+        self.last_error = ''
+        self._save_blocked = False
 
         # 单词间隔（默认从配置，可在运行时修改并持久化）
         self.word_interval = WORD_INTERVAL
@@ -62,22 +77,28 @@ class Pet:
         """每帧调用，更新状态和位置。frozen=True 时冻结行为（菜单打开时用）"""
         # 将原先按 60 FPS 调好的数值换算为真实时间，同时限制卡顿后的
         # 单帧补偿，避免打开系统对话框后宠物突然冲出很远。
-        frame_scale = min(max(dt, 0.0) * FPS, 3.0)
+        dt = max(0.0, min(dt, 0.1))
+        frame_scale = dt * FPS
         self._decay_states(frame_scale)
-        if not frozen:
+        if not frozen and not self.is_dragging:
             self._evaluate_behavior(dt)
+            self._execute_behavior(frame_scale)
+        elif self.behavior in (B_HAPPY, B_SURPRISED, B_PETTING):
+            # 安静模式和菜单只冻结走动，短时互动仍需正常结束。
             self._execute_behavior(frame_scale)
         self.frame += frame_scale
 
         # 时间驱动动画帧（不受实际帧率波动影响）
+        self.animation_elapsed += dt
         self.anim_timer += dt
         frame_duration = 1.0 / self.ANIM_FPS
         while self.anim_timer >= frame_duration:
             self.anim_timer -= frame_duration
             self.anim_frame += 1
 
-        self._update_z_effect()
-        self._update_feedback()
+        self._update_z_effect(dt)
+        self._update_feedback(frame_scale)
+        self._clamp_position()
         # 状态面板计时（键盘交互触发，随时间淡出）
         self.panel_timer = max(0.0, self.panel_timer - dt)
 
@@ -114,6 +135,7 @@ class Pet:
             self.frame = 0
             self.anim_frame = 0
             self.anim_timer = 0.0
+            self.animation_elapsed = 0.0
             # idle/walk/sleep/sad 都是循环行为，必须继续参与下一轮评估。
             # 只有点击触发的 happy/surprised 属于一次性动画。
             self.animation_finished = True
@@ -150,13 +172,22 @@ class Pet:
             if self.surprised_timer <= 0:
                 self._finish_animation()
 
+        elif self.behavior == B_PETTING:
+            self.petting_timer -= frame_scale
+            if self.petting_timer <= 0:
+                self._finish_animation()
+
     def _clamp_position(self):
+        area = nearest_work_area(self.x, self.y)
+        self.min_x, self.min_y_scrn, self.max_x, self.max_y_scrn = movement_bounds(
+            self.x, self.y, area, PET_MARGIN_X, PET_MARGIN_TOP, PET_MARGIN_BOTTOM)
+        requested_x = self.x
         self.x = max(self.min_x, min(self.max_x, self.x))
         self.y = max(self.min_y_scrn, min(self.max_y_scrn, self.y))
         # 到边界转向
-        if self.x <= self.min_x:
+        if requested_x < self.min_x:
             self.direction = 1
-        elif self.x >= self.max_x:
+        elif requested_x > self.max_x:
             self.direction = -1
 
     def _finish_animation(self):
@@ -166,24 +197,25 @@ class Pet:
         self.frame = 0
         self.anim_frame = 0
         self.anim_timer = 0.0
+        self.animation_elapsed = 0.0
 
     # ─── Z 特效 ────────────────────────────────
 
-    def _update_z_effect(self):
+    def _update_z_effect(self, dt=1.0/60):
         if self.behavior == B_SLEEP:
-            self.sleep_z_timer += 1
-            self.sleep_z_visible = (self.sleep_z_timer % 120) < 60
+            self.sleep_z_timer += dt
+            self.sleep_z_visible = (self.sleep_z_timer % 2.0) < 1.0
         else:
             self.sleep_z_timer = 0
             self.sleep_z_visible = False
 
-    def _update_feedback(self):
-        self.feedback_items = [item for item in self.feedback_items if item['life'] > 0]
+    def _update_feedback(self, frame_scale=1.0):
         for item in self.feedback_items:
-            item['life'] -= 1
-            item['y'] -= item['vy']
-            item['x'] += item['vx']
-            item['alpha'] = item['life'] / item['max_life']
+            item['life'] -= frame_scale
+            item['y'] -= item['vy'] * frame_scale
+            item['x'] += item['vx'] * frame_scale
+            item['alpha'] = max(0.0, item['life'] / item['max_life'])
+        self.feedback_items = [item for item in self.feedback_items if item['life'] > 0]
 
     def add_feedback(self, text, color, count=5):
         for _ in range(count):
@@ -227,7 +259,8 @@ class Pet:
         self.frame = 0
         self.anim_frame = 0
         self.anim_timer = 0.0
-        self.happy_timer = 30  # 0.5 秒 (30 帧)
+        self.animation_elapsed = 0.0
+        self.happy_timer = 60  # 一秒，完整表现开心动作。
         self.animation_finished = False
 
     def on_feed(self):
@@ -240,6 +273,12 @@ class Pet:
     def on_pet(self):
         """抚摸"""
         self.mood = min(100, self.mood + PET_MOOD_BOOST)
+        self.behavior = B_PETTING
+        self.animation_elapsed = 0.0
+        self.anim_timer = 0.0
+        self.anim_frame = 0
+        self.petting_timer = 72
+        self.animation_finished = False
         self.add_feedback('\u2764\uFE0F', (255, 120, 160), 4)
         self.add_particles((255, 150, 200), 8)
 
@@ -250,8 +289,32 @@ class Pet:
         self.frame = 0
         self.anim_frame = 0
         self.anim_timer = 0.0
-        self.surprised_timer = 15
+        self.animation_elapsed = 0.0
+        self.surprised_timer = 42
         self.animation_finished = False
+
+    def begin_lift(self):
+        """拖动开始时切到被提起动作，不增加点击奖励。"""
+        self.is_dragging = True
+        self.behavior = B_LIFT
+        self.animation_elapsed = 0.0
+        self.animation_finished = False
+
+    def end_lift(self):
+        self.is_dragging = False
+        self._finish_animation()
+        self.eval_timer = 0.0
+
+    def settle(self):
+        """进入安静模式时停止走动，保持休息姿态。"""
+        self.is_dragging = False
+        self._finish_animation()
+        self.eval_timer = 0.0
+
+    def recenter(self, screen_x, screen_y):
+        left, top, right, bottom = nearest_work_area(screen_x, screen_y)
+        self.x, self.y = (left + right) / 2, (top + bottom) / 2
+        self._clamp_position()
 
     # ─── 碰撞检测 ──────────────────────────────
 
@@ -264,10 +327,6 @@ class Pet:
     # ─── 动画名称（供 character.py 用）────────
 
     def get_anim_name(self):
-        if self.behavior == B_HAPPY and self.happy_timer > 20:
-            return 'happy_jump'
-        elif self.behavior == B_HAPPY:
-            return 'happy_land'
         return self.behavior
 
     # ─── 状态文本（调试用）────────────────────
@@ -280,6 +339,9 @@ class Pet:
 
     def save(self):
         """保存状态到文件"""
+        if self._save_blocked:
+            self.last_error = '存档备份失败，已禁止覆盖原文件'
+            return False
         data = {
             'x': self.x,
             'y': self.y,
@@ -290,10 +352,13 @@ class Pet:
             'word_interval': self.word_interval,
         }
         try:
-            with open(SAVE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(data, f)
-        except Exception:
-            pass
+            write_json_atomic(SAVE_FILE, data)
+            self.last_error = ''
+            return True
+        except (OSError, ValueError):
+            self.last_error = '保存宠物状态失败，请检查磁盘空间或权限'
+            log.exception(self.last_error)
+            return False
 
     def _load(self):
         """从文件恢复状态"""
@@ -302,13 +367,19 @@ class Pet:
         try:
             with open(SAVE_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            self.x = data.get('x', self.x)
-            self.y = data.get('y', self.y)
-            self.hunger = data.get('hunger', self.hunger)
-            self.mood = data.get('mood', self.mood)
-            self.energy = data.get('energy', self.energy)
-            self.direction = data.get('direction', self.direction)
-            self.word_interval = data.get('word_interval', self.word_interval)
+            if not isinstance(data, dict):
+                raise ValueError('存档必须是对象')
+            self.x = finite_number(data.get('x'), self.x)
+            self.y = finite_number(data.get('y'), self.y)
+            for field in ('hunger', 'mood', 'energy'):
+                setattr(self, field, finite_number(data.get(field), getattr(self, field), 0, 100))
+            self.direction = -1 if data.get('direction') == -1 else 1
+            self.word_interval = finite_number(data.get('word_interval'), WORD_INTERVAL, 10, 3600)
             self._clamp_position()
-        except Exception:
-            pass
+        except (OSError, ValueError, TypeError):
+            self.last_error = '存档损坏，已恢复默认状态'
+            log.exception(self.last_error)
+            try:
+                backup_corrupt(SAVE_FILE)
+            except OSError:
+                self._save_blocked = True

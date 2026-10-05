@@ -8,13 +8,9 @@ os.chdir(PROJECT_DIR)
 # 自动扫描词库文件（支持中文文件名）
 word_files = []
 for f in os.listdir('.'):
-    if f.startswith('words_') and f.endswith('.json'):
+    if f.startswith('words_') and f.endswith('.json') and f != 'words_index.json':
         word_files.append(f)
-# 确保 words_index.json 在最后
 word_files.sort()
-if 'words_index.json' in word_files:
-    word_files.remove('words_index.json')
-    word_files.append('words_index.json')
 
 # 构建 --add-data 参数
 add_data = []
