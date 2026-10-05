@@ -1,24 +1,47 @@
+# Python 环境与缓存
 __pycache__/
 *.py[cod]
-.venv/
-build/
-dist/
-.reasonix/
-.idea/
-.vscode/
-.codex/
-.agents/
-*.tmp
+/.venv/
+/.pytest_cache/
+/.mypy_cache/
+/.ruff_cache/
+/.coverage
+/htmlcov/
+
+# 打包与验证产物
+/build/
+/dist/
+/artifacts/
 *.spec
-save.json
-settings.json
-words.json
-words_index.json
-*.log
-DeskPet.exe
-reasonix.toml
-.workbuddy/
-progress/
+/DeskPet.exe
+
+# 本机存档、设置与进度
+/save.json
+/settings.json
+/words.json
+/words_index.json
+/progress/
+/.legacy_migrated
+/portable.flag
+
+# 个人导入词库；保留项目内置的三本词库
+/words_*.json
+!/words_3 四级-乱序 .json
+!/words_4 六级-乱序.json
+!/words_5 考研-乱序.json
+
+# 临时文件、损坏备份及滚动日志
+*.tmp
 *.bak
-.legacy_migrated
-artifacts/
+*.log
+*.log.*
+
+# 编辑器及本机工具配置
+/.idea/
+/.vscode/
+/.codex/
+/.agents/
+/.reasonix/
+/.workbuddy/
+/.learnings/
+/reasonix.toml
